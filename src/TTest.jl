@@ -1,5 +1,5 @@
 module TTest
-export TTestObj
+export TTestObj, ttest_fit, ttest_finalize
 
 include("Utils.jl")
 using .Utils

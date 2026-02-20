@@ -1,3 +1,7 @@
+"""
+Signal to Noise Ratio (SNR)
+"""
+
 module SNR
 
 include("Utils.jl")
