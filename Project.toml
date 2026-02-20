@@ -1,0 +1,31 @@
+name = "SCA"
+uuid = "0b63aa34-41a5-492c-a1ca-e3ebcf724c10"
+version = "1.0.0-DEV"
+authors = ["George Crane <george.crane@unh.edu> and contributors"]
+
+[deps]
+Atomix = "a9b6321e-bd34-4604-b9c9-b65b8de01458"
+Combinatorics = "861a8166-3701-5b0c-9a16-15d98fcdc6aa"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
+MultivariateStats = "6f286f6a-111f-5878-ab1e-185364afe411"
+OrderedCollections = "bac558e1-5e72-5ebc-8fee-abe8a469f55d"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+
+[compat]
+Atomix = "1.1.2"
+Combinatorics = "1.1.0"
+Distributions = "0.25.123"
+KernelAbstractions = "0.9.40"
+MultivariateStats = "0.10.3"
+OrderedCollections = "1.8.1"
+Random = "1.11.0"
+Statistics = "1.11.1"
+julia = "1.11"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
