@@ -17,21 +17,39 @@ mutable struct SNRBasic{Tt<:AbstractFloat, Tl<:Integer}
     sums_sq::AbstractMatrix{Tt}
     totals::AbstractVector{Int}
     const nl::Int
+    const ns::Int
 
     function SNRBasic{Tt, Tl}(ns::Int, nl::Int) where {Tt<:AbstractFloat, Tl<:Integer}
         sums = zeros(Tt, nl, ns)
         sums_sq = zeros(Tt, nl, ns)
         totals = zeros(Tl, nl)
-        new(sums, sums_sq, totals, nl)
+        new(sums, sums_sq, totals, nl, ns)
     end
 end
 
 mutable struct SNRMoments{Tt<:AbstractFloat, Tl<:Integer}
     moments::UniVarMomentsAcc{Tt, Tl, Array}
+    nl::Int
+    ns::Int
 
     function SNRMoments{Tt, Tl}(ns::Int, nl::Int) where {Tt<:AbstractFloat, Tl<:Integer}
         moments = UniVarMomentsAcc{Tt, Tl, Array}(2, ns, nl)
-        new(moments)
+        new(moments, nl, ns)
+    end
+end
+
+# I could have also done this by chunking into SNRMoments structs, might
+# have been easier
+mutable struct SNRMomentsChunked{Tt<:AbstractFloat, Tl<:Integer}
+    chunksize::Int  # chunks may not be of exactly `chunksize` dim
+    moments::Dict{UnitRange, UniVarMomentsAcc{Tt, Tl, Array}}
+    nl::Int
+    ns::Int
+
+    function SNRMomentsChunked{Tt, Tl}(ns::Int, nl::Int, chunksize::Int = 16384) where {Tt<:AbstractFloat, Tl<:Integer}
+        slices = tiled_view(1:ns, (chunksize, ))
+        moments = Dict(slice => UniVarMomentsAcc{Tt, Tl, Array}(2, size(slice, 1), nl) for slice in slices)
+        new(chunksize, moments, nl, ns)
     end
 end
 
@@ -71,6 +89,13 @@ function SNR_fit!(snr::Union{SNRMoments{Tt, Tl}, SNROrdered{Tt, Tl}}, traces::Ab
     centered_sum_update!(snr.moments, traces, labels)
 end
 
+function SNR_fit!(snr::SNRMomentsChunked{Tt, Tl}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:Real, Tl<:Real}
+    # TODO: these can be dispatched asynchronously 
+    for trace_slice in collect(keys(snr.moments))
+        centered_sum_update!(snr.moments[trace_slice], traces[:, trace_slice], labels[:])
+    end
+end
+
 function SNR_finalize(snr::SNRBasic{Tt, Tl})::Vector where {Tt<:Real, Tl<:Real}
     means = snr.sums ./ snr.totals
     signals = var(means, dims=1)
@@ -88,7 +113,22 @@ function SNR_finalize(snr::SNRMoments{Tt, Tl})::Vector where {Tt<:Real, Tl<:Inte
     vars = (snr.moments.moments[:, 2, :] ./ snr.moments.totals)
     noises = mean(vars, dims=1)
 
-    signals ./ noises
+    vec(signals ./ noises)
+end
+
+function SNR_finalize(snr::SNRMomentsChunked{Tt, Tl})::Vector where {Tt<:Real, Tl<:Integer}
+    out = zeros(snr.ns)
+    Threads.@threads for slice in collect(keys(snr.moments))
+        means = @views snr.moments[slice].moments[:, 1, :]
+        signals = var(means, dims=1)
+        
+        vars = (snr.moments[slice].moments[:, 2, :] ./ snr.moments[slice].totals)
+        noises = mean(vars, dims=1)
+
+        out[slice] .= vec(signals ./ noises)
+    end
+
+    out
 end
 
 function SNR_finalize(snr::SNROrdered)::Vector 

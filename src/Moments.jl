@@ -13,6 +13,8 @@ using Random
 using KernelAbstractions, Atomix
 using Base: convert
 
+# TODO: I'm not convinced this actually needs to be parameterized on the array type, and it
+# does complicate things slightly.
 mutable struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     totals::Tarray  # Tarray is a typevar, which you can't parameterize directly 
     moments::Tarray
@@ -28,7 +30,7 @@ mutable struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:Abstract
 end
 
 # works on CPU and GPU
-@kernel function label_wise_sum_shared!(traces::AbstractMatrix{Tt}, labels, sums, totals) where {Tt<:AbstractFloat}
+@kernel function label_wise_sum_shared!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     I, J = @index(Global, NTuple)  # I: trace, J: y_offset
     i, j = @index(Local, NTuple)
 
@@ -75,7 +77,7 @@ end
 
 # Centered sum update kernel + wrapper
 @kernel function centered_sum_kern!(moments::AbstractArray{Tt, 3}, traces::AbstractArray, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
-    i, j = @index(Local, NTuple)  # j: trace_y_offset_local
+    i, j = @index(Local, NTuple)  # i: assumed to be 1, j: trace_y_offset_local
     I, J = @index(Global, NTuple)  # I: trace, J: trace_y_offset_global
 
     order = @uniform size(moments, 2)
@@ -91,37 +93,40 @@ end
     @inbounds pow[i, j] = t[i, j]
 
     for d in 2:order
-        # @synchronize()
         @inbounds pow[i, j] *= t[i, j]
         @inbounds Atomix.@atomic moments[l_i, d, J] += pow[i, j]
     end
 end
 
 # Update the estimation of centered sums in `acc`
+# Note: Tarray must be `Array`, as the struct must live in CPU memory. However, if
+# `traces` and `labels` are GPU arrays, as much computation as possible will be done
+# on GPU before finalizing results on the CPU.
 function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     # Initialize intermediate values
-    sums = fill!(Tarray{Tt, 2}(undef, acc.nl, acc.ns), 0); moments_2 = fill!(Tarray{Tt, 3}(undef, size(acc.moments)), 0); totals_2 = fill!(Tarray{UInt32, 1}(undef, size(acc.totals)), 0)
+    sums = fill!(similar(traces, Tt, acc.nl, acc.ns), 0)
+    moments = fill!(similar(traces, Tt, size(acc.moments)), 0)
+    totals = fill!(similar(traces, UInt32, size(acc.totals)), 0)
 
-    label_wise_sum_shared!(get_backend(traces))(traces, labels, sums, totals_2, ndrange=size(traces))
-    # label_wise_sum_cpu!(traces, labels, sums, totals_2)
+    label_wise_sum_shared!(get_backend(traces), (4, 64))(traces, labels, sums, totals, ndrange=size(traces))
+    # label_wise_sum_cpu!(traces, labels, sums, totals)
     KernelAbstractions.synchronize(get_backend(sums))
 
     # find means
-    @. moments_2[:, 1, :] = sums / totals_2
+    @. moments[:, 1, :] = sums / totals
 
     # compute centered sums
-    centered_sum_kern!(get_backend(moments_2), (1, 256))(moments_2, traces, labels, ndrange=size(traces))
+    centered_sum_kern!(get_backend(moments), (1, 256))(moments, traces, labels, ndrange=size(traces))
     KernelAbstractions.synchronize(get_backend(sums))
 
     # This has to be performed on CPU for now, its a pretty complicated OP
-    merge_from!(acc, moments_2, totals_2)
-    return acc
+    merge_from!(acc, Tarray(moments), Tarray(totals))
 end
 
 # Precision (even with Float64) seems to degrade from performing the same 
 # computation in a single centered_sum_update! for the same data. Use of 
 # this should be minimized, prefer larger update batches whenever possible
-function merge_from!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, M_new::AbstractArray{Tt, 3}, totals_new::AbstractArray{UInt32, 1}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+function merge_from!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, M_new::Array{Tt, 3}, totals_new::Array{UInt32, 1}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     if all(totals_new .== 0)
         return nothing
     end

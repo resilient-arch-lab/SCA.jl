@@ -1,4 +1,6 @@
 module SCA
+export SNR, Moments, Utils, Attack
+
 
 include("SNR.jl")
 using .SNR
