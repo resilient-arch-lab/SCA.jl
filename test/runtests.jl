@@ -1,12 +1,12 @@
 using SCA
 using Test
+using Statistics
 
 @testset "SCA.jl" begin
     # Write your tests here.
 end
 
 @testset "Test SNR chunked implementation" begin
-
     t = rand(Float64, 2000, 1000)
     l = rand(UInt8, 2000)
 
@@ -20,5 +20,27 @@ end
     res2 = SNR.SNR_finalize(snr2)
 
     @test all(res1 .≈ res2) 
+end
 
+# Test precision / stability of centered sum merging formula [Prop. 2.1, 10.2172/1028931]
+# with reference to a single centered sum calculation on the same data, requiring no merge
+# operation. Initial results are inconsistent even with a relative tolarance of 1. 
+@testset "Moment merging precision comparison" begin
+    a = rand(10000, 20)
+    l = rand(UInt8, 10000)
+    m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
+    m2 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
+
+    a_tiles, l_tiles = Utils.tiled_view(a, (5000, 20)), Utils.tiled_view(l, (5000, ))
+
+    Moments.centered_sum_update!(m1, a, l)
+    for (a_tile, l_tile) in zip(a_tiles, l_tiles)
+        Moments.centered_sum_update!(m2, a_tile, l_tile)
+    end
+
+    correct = all(isapprox.(m1.moments, m2.moments; rtol=1e-2))
+    prcnt_err = abs.((m2.moments .- m1.moments) ./ m1.moments).*100
+
+    println("Moment merging algorithm test case percent error per order $(1:m1.order)")
+    display(vec(mean(prcnt_err, dims=(1, 3))))
 end

@@ -1,6 +1,6 @@
 """
-Parallel estimation of statistical moments, based in part
-on the [SCALib](https://github.com/simple-crypto/SCALib) implementation
+Parallel estimation of statistical moments. based on the implementation from
+[SCALib](https://github.com/simple-crypto/SCALib).
 """
 
 module Moments
