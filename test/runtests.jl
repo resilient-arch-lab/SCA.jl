@@ -2,10 +2,6 @@ using SCA
 using Test
 using Statistics
 
-@testset "SCA.jl" begin
-    # Write your tests here.
-end
-
 @testset "Test SNR chunked implementation" begin
     t = rand(Float64, 2000, 1000)
     l = rand(UInt8, 2000)

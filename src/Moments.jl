@@ -224,5 +224,4 @@ function _merge_from_test()
     m1, m2
 end
 
-
 end  # module Moments
