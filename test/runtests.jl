@@ -19,6 +19,6 @@ end
     res1 = SNR.SNR_finalize(snr1)
     res2 = SNR.SNR_finalize(snr2)
 
-    @test all(res1 .≈ res2)
+    @test all(res1 .≈ res2) 
 
 end
