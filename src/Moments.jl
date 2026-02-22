@@ -34,7 +34,7 @@ end
     I, J = @index(Global, NTuple)  # I: trace, J: y_offset
     i, j = @index(Local, NTuple)
 
-    nt = @uniform @groupsize()[1]
+    nt = @uniform @groupsize()[1]  # this is compile time constant if the kernel is compiled with a static workgroup size
     ns = @uniform @groupsize()[2]
     t_sh = @localmem Tt (nt, ns)
     l_sh = @localmem Int32 nt
@@ -75,7 +75,7 @@ function label_wise_sum_cpu!(traces::AbstractArray, labels::AbstractArray, sums:
     end
 end
 
-# Centered sum update kernel + wrapper
+# Centered sum update kernel
 @kernel function centered_sum_kern!(moments::AbstractArray{Tt, 3}, traces::AbstractArray, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     i, j = @index(Local, NTuple)  # i: assumed to be 1, j: trace_y_offset_local
     I, J = @index(Global, NTuple)  # I: trace, J: trace_y_offset_global
@@ -108,16 +108,20 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
     moments = fill!(similar(traces, Tt, size(acc.moments)), 0)
     totals = fill!(similar(traces, UInt32, size(acc.totals)), 0)
 
-    label_wise_sum_shared!(get_backend(traces), (4, 64))(traces, labels, sums, totals, ndrange=size(traces))
+    # compile kernels
+    _label_wise_sum_kern = label_wise_sum_shared!(get_backend(traces), (4, 64))
+    _centered_sum_kern = centered_sum_kern!(get_backend(moments), (1, 256))
+
+    _label_wise_sum_kern(traces, labels, sums, totals, ndrange=size(traces))
     # label_wise_sum_cpu!(traces, labels, sums, totals)
-    KernelAbstractions.synchronize(get_backend(sums))
+    # KernelAbstractions.synchronize(get_backend(sums))
 
     # find means
     @. moments[:, 1, :] = sums / totals
 
     # compute centered sums
-    centered_sum_kern!(get_backend(moments), (1, 256))(moments, traces, labels, ndrange=size(traces))
-    KernelAbstractions.synchronize(get_backend(sums))
+    _centered_sum_kern(moments, traces, labels, ndrange=size(traces))
+    # KernelAbstractions.synchronize(get_backend(sums))
 
     # This has to be performed on CPU for now, its a pretty complicated OP
     merge_from!(acc, Tarray(moments), Tarray(totals))
