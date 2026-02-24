@@ -8,8 +8,8 @@ using BenchmarkTools
 bench_suite = BenchmarkGroup(["SNR", ])
 
 # TODO: benchmark SNR and Chunked SNR on CPU and GPU
-t = rand(Float32, 1000000, 1000)
-l = rand(UInt8, 1000000)
+t = rand(Float32, 500000, 1000)
+l = rand(UInt8, 500000)
 
 bench_suite["SNR"]["CPU"]["Fit"] = BenchmarkGroup(["Single", "Chunked_10k", "Chunked_50k"])
 bench_suite["SNR"]["CPU"]["Finalize"] = BenchmarkGroup(["Single", "Chunked_10k", "Chunked_50k"])
@@ -28,7 +28,7 @@ bench_suite["SNR"]["CPU"]["Finalize"]["Chunked_50k"] = @benchmarkable SNR.SNR_fi
 
 function test_SNRMoments_CPU()
     tune!(bench_suite)
-    run(bench_suite, verbose = true, seconds = 5)
+    run(bench_suite, verbose = true, seconds = 10)
 end
 
 end  # module SCABenchmarks
