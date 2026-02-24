@@ -38,6 +38,7 @@ mutable struct SNRMoments{Tt<:AbstractFloat, Tl<:Integer}
     end
 end
 
+# TODO: depricate `SNRMomentsChunked` in favor of `SNRMomentsChunkedMulti`
 mutable struct SNRMomentsChunked{Tt<:AbstractFloat, Tl<:Integer}
     chunksize::Int  # chunks may not be of exactly `chunksize` dim
     chunk_map::Dict{UnitRange, SNRMoments{Tt, Tl}}
@@ -139,15 +140,7 @@ function SNR_finalize(snr::SNRMoments{Tt, Tl})::Vector where {Tt<:Real, Tl<:Inte
     vec(signals ./ noises)
 end
 
-function SNR_finalize(snr::SNRMomentsChunked{Tt, Tl})::Vector where {Tt<:Real, Tl<:Integer}
-    out = zeros(snr.ns)
-    Threads.@threads for slice in collect(keys(snr.chunk_map))
-        out[slice] .= SNR_finalize(snr.chunk_map[slice])
-    end
-    out
-end
-
-function SNR_finalize(snr::SNRMomentsChunkedMulti{Tt, Tl})::Vector where {Tt<:Real, Tl<:Integer}
+function SNR_finalize(snr::Union{SNRMomentsChunked{Tt, Tl}, SNRMomentsChunkedMulti{Tt, Tl}})::Vector where {Tt<:Real, Tl<:Integer}
     out = zeros(snr.ns)
     Threads.@threads for slice in collect(keys(snr.chunk_map))
         out[slice] .= SNR_finalize(snr.chunk_map[slice])
