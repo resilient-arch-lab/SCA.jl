@@ -189,6 +189,10 @@ function merge_from!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, M_new::Array{Tt, 3},
     return nothing
 end
 
+function merge_from!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, acc_new::UniVarMomentsAcc{Tt, Tl, Tarray}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+    merge_from!(acc, acc_new.moments, acc_new.totals)
+end
+
 function get_mean_and_var(m::UniVarMomentsAcc, d::Int)
     if d == 1
         @inbounds μ = @view m.moments[:, 1, :]

@@ -8,14 +8,18 @@ using Statistics
 
     snr1 = SNR.SNRMoments{Float64, UInt8}(1000, 256)
     snr2 = SNR.SNRMomentsChunked{Float64, UInt8}(1000, 256, 200)
+    snr3 = SNR.SNRMomentsChunkedMulti{Float64, UInt8}(1000, 256, (1000, 200))
 
     SNR.SNR_fit!(snr1, t, l)
     SNR.SNR_fit!(snr2, t, l)
+    SNR.SNR_fit!(snr3, t, l)
 
     res1 = SNR.SNR_finalize(snr1)
     res2 = SNR.SNR_finalize(snr2)
+    res3 = SNR.SNR_finalize(snr3)
 
-    @test all(res1 .≈ res2) 
+    @test all(res1 .≈ res2)
+    @test all(res1 .≈ res3)
 end
 
 # Test precision / stability of centered sum merging formula [Prop. 2.1, 10.2172/1028931]

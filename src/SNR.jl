@@ -44,8 +44,21 @@ mutable struct SNRMomentsChunked{Tt<:AbstractFloat, Tl<:Integer}
     nl::Int
     ns::Int
 
-    function SNRMomentsChunked{Tt, Tl}(ns::Int, nl::Int, chunksize::Int = 16384) where {Tt<:AbstractFloat, Tl<:Integer}
+    function SNRMomentsChunked{Tt, Tl}(ns::Int, nl::Int, chunksize::Int = 1000) where {Tt<:AbstractFloat, Tl<:Integer}
         slices = tiled_view(1:ns, (chunksize, ))
+        chunk_map = Dict(slice => SNRMoments{Tt, Tl}(size(slice, 1), nl) for slice in slices)
+        new(chunksize, chunk_map, nl, ns)
+    end
+end
+
+mutable struct SNRMomentsChunkedMulti{Tt<:AbstractFloat, Tl<:Integer}
+    chunksize::NTuple{2, Int}  # chunks may not be of exactly `chunksize` dim
+    chunk_map::Dict{UnitRange, SNRMoments{Tt, Tl}}
+    nl::Int
+    ns::Int
+
+    function SNRMomentsChunkedMulti{Tt, Tl}(ns::Int, nl::Int, chunksize::NTuple{2, Int} = (10000, 1000)) where {Tt<:AbstractFloat, Tl<:Integer}
+        slices = tiled_view(1:ns, (chunksize[2], ))
         chunk_map = Dict(slice => SNRMoments{Tt, Tl}(size(slice, 1), nl) for slice in slices)
         new(chunksize, chunk_map, nl, ns)
     end
@@ -94,6 +107,18 @@ function SNR_fit!(snr::SNRMomentsChunked{Tt, Tl}, traces::AbstractMatrix{Tt}, la
     end
 end
 
+function SNR_fit!(snr::SNRMomentsChunkedMulti{Tt, Tl}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:Real, Tl<:Real}
+    (trace_tiles, tile_indices) = tiled_view(traces, snr.chunksize; return_indices=true)
+    label_tiles = tiled_view(labels, (snr.chunksize[1], ))
+
+    # TODO: l_tile must be broadcast to  
+    for (t_tile, l_tile, tile_idx) in zip(trace_tiles, repeat(label_tiles, outer=(1, size(trace_tiles, 2))), tile_indices)
+        # NOTE: tiles which don't overlap on dimension 2 can be processed concurrently. 
+        SNR_fit!(snr.chunk_map[tile_idx[2]], t_tile, l_tile)
+    end
+end
+
+
 function SNR_finalize(snr::SNRBasic{Tt, Tl})::Vector where {Tt<:Real, Tl<:Real}
     means = snr.sums ./ snr.totals
     signals = var(means, dims=1)
@@ -115,6 +140,14 @@ function SNR_finalize(snr::SNRMoments{Tt, Tl})::Vector where {Tt<:Real, Tl<:Inte
 end
 
 function SNR_finalize(snr::SNRMomentsChunked{Tt, Tl})::Vector where {Tt<:Real, Tl<:Integer}
+    out = zeros(snr.ns)
+    Threads.@threads for slice in collect(keys(snr.chunk_map))
+        out[slice] .= SNR_finalize(snr.chunk_map[slice])
+    end
+    out
+end
+
+function SNR_finalize(snr::SNRMomentsChunkedMulti{Tt, Tl})::Vector where {Tt<:Real, Tl<:Integer}
     out = zeros(snr.ns)
     Threads.@threads for slice in collect(keys(snr.chunk_map))
         out[slice] .= SNR_finalize(snr.chunk_map[slice])

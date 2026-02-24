@@ -4,29 +4,35 @@ export test_SNRMoments_CPU
 using SCA
 using BenchmarkTools
 
-
+# The BenchmarkGroup seems to be required to be declared globally
 bench_suite = BenchmarkGroup(["SNR", ])
 
-# TODO: benchmark SNR and Chunked SNR on CPU and GPU
 t = rand(Float32, 500000, 1000)
 l = rand(UInt8, 500000)
 
-bench_suite["SNR"]["CPU"]["Fit"] = BenchmarkGroup(["Single", "Chunked_10k", "Chunked_50k"])
-bench_suite["SNR"]["CPU"]["Finalize"] = BenchmarkGroup(["Single", "Chunked_10k", "Chunked_50k"])
+bench_suite["SNR"]["CPU"]["Fit"] = BenchmarkGroup(["Single", "Chunked_single_500", "Chunked_single_200", "Chunked_100k_single", "Chunked_100k_500"])
+bench_suite["SNR"]["CPU"]["Finalize"] = BenchmarkGroup(["Single", "Chunked_single_500", "Chunked_single_200", "Chunked_100k_single", "Chunked_100k_500"])
 
 snr1 = SNR.SNRMoments{Float32, UInt8}(size(t, 2), 256)
-snr2 = SNR.SNRMomentsChunked{Float32, UInt8}(size(t, 2), 256, 10000)
-snr3 = SNR.SNRMomentsChunked{Float32, UInt8}(size(t, 2), 256, 50000)
+snr2 = SNR.SNRMomentsChunked{Float32, UInt8}(size(t, 2), 256, 500)
+snr3 = SNR.SNRMomentsChunked{Float32, UInt8}(size(t, 2), 256, 200)
+snr4 = SNR.SNRMomentsChunkedMulti{Float32, UInt8}(size(t, 2), 256, (100000, 500))
+snr5 = SNR.SNRMomentsChunkedMulti{Float32, UInt8}(size(t, 2), 256, (100000, 1000))
 
 bench_suite["SNR"]["CPU"]["Fit"]["Single"] = @benchmarkable SNR.SNR_fit!(snr1, t, l)
-bench_suite["SNR"]["CPU"]["Fit"]["Chunked_10k"] = @benchmarkable SNR.SNR_fit!(snr2, t, l)
-bench_suite["SNR"]["CPU"]["Fit"]["Chunked_50k"] = @benchmarkable SNR.SNR_fit!(snr3, t, l)
+bench_suite["SNR"]["CPU"]["Fit"]["Chunked_single_500"] = @benchmarkable SNR.SNR_fit!(snr2, t, l)
+bench_suite["SNR"]["CPU"]["Fit"]["Chunked_single_200"] = @benchmarkable SNR.SNR_fit!(snr3, t, l)
+bench_suite["SNR"]["CPU"]["Fit"]["Chunked_100k_500"] = @benchmarkable SNR.SNR_fit!(snr4, t, l)
+bench_suite["SNR"]["CPU"]["Fit"]["Chunked_100k_single"] = @benchmarkable SNR.SNR_fit!(snr5, t, l)
 
 bench_suite["SNR"]["CPU"]["Finalize"]["Single"] = @benchmarkable SNR.SNR_finalize(snr1)
-bench_suite["SNR"]["CPU"]["Finalize"]["Chunked_10k"] = @benchmarkable SNR.SNR_finalize(snr2)
-bench_suite["SNR"]["CPU"]["Finalize"]["Chunked_50k"] = @benchmarkable SNR.SNR_finalize(snr3)
+bench_suite["SNR"]["CPU"]["Finalize"]["Chunked_single_500"] = @benchmarkable SNR.SNR_finalize(snr2)
+bench_suite["SNR"]["CPU"]["Finalize"]["Chunked_single_200"] = @benchmarkable SNR.SNR_finalize(snr3)
+bench_suite["SNR"]["CPU"]["Finalize"]["Chunked_100k_500"] = @benchmarkable SNR.SNR_finalize(snr4)
+bench_suite["SNR"]["CPU"]["Finalize"]["Chunked_100k_single"] = @benchmarkable SNR.SNR_finalize(snr5)
 
-function test_SNRMoments_CPU()
+function SNRMoments_CPU()
+    println("Tuning benchmark parameters")
     tune!(bench_suite)
     run(bench_suite, verbose = true, seconds = 10)
 end
