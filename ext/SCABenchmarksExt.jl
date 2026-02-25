@@ -31,7 +31,7 @@ bench_suite["SNR"]["CPU"]["Finalize"]["Chunked[all, 200]"] = @benchmarkable SNR.
 bench_suite["SNR"]["CPU"]["Finalize"]["Chunked[100k, 500]"] = @benchmarkable SNR.SNR_finalize(snr4)
 bench_suite["SNR"]["CPU"]["Finalize"]["Chunked[100k, all]"] = @benchmarkable SNR.SNR_finalize(snr5)
 
-function SNRMoments_CPU()
+function SCA.SNRMoments_CPU()
     println("Tuning benchmark parameters")
     tune!(bench_suite)
     run(bench_suite, verbose = true, seconds = 10)

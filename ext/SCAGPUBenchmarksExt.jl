@@ -53,7 +53,7 @@ bench_suite["SNR"]["GPU"]["Finalize"]["Chunked[all, 200]"] = @benchmarkable SNR.
 bench_suite["SNR"]["GPU"]["Finalize"]["Chunked[100k, 500]"] = @benchmarkable SNR.SNR_finalize(snr4)
 bench_suite["SNR"]["GPU"]["Finalize"]["Chunked[100k, all]"] = @benchmarkable SNR.SNR_finalize(snr5)
 
-function SNRMoments_GPU()
+function SCA.SNRMoments_GPU()
     println("Tuning benchmark parameters")
     tune!(bench_suite)
     run(bench_suite, verbose = true, seconds = 10)
