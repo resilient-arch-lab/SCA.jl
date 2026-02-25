@@ -1,5 +1,5 @@
 module SCABenchmarks
-export test_SNRMoments_CPU
+export SNRMoments_CPU
 
 using SCA
 using BenchmarkTools
