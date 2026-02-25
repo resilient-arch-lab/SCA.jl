@@ -1,7 +1,7 @@
 module SCAGPUBenchmarksExt
 export SNRMoments_GPU
 
-using SCA: SCAGPUArraysExt
+using SCA: SCAGPUArraysExt  # SCAGPUArraysExt not defined at time when this extension is loaded.
 using BenchmarkTools
 using KernelAbstractions
 

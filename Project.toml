@@ -18,7 +18,6 @@ GPUArrays = "0c68f7d7-f131-5f86-a1c3-88cf8149b2d7"
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 
 [extensions]
-SCABenchmarksExt = "BenchmarkTools"
 SCAGPUArraysExt = "GPUArrays"
 SCAGPUBenchmarksExt = ["GPUArrays", "BenchmarkTools"]
 
