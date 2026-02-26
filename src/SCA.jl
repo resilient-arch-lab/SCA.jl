@@ -5,6 +5,9 @@ export SNR, Moments, Utils, Attack
 include("SNR.jl")
 using .SNR
 
+include("TTest.jl")
+using .TTest
+
 include("Moments.jl")
 using .Moments
 

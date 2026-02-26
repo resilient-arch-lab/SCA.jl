@@ -1,5 +1,5 @@
 module TTest
-export TTestObj, ttest_fit, ttest_finalize
+export ttest_fit!, ttest_finalize, TTestSingle, TTestChunked
 
 include("Utils.jl")
 using .Utils
@@ -21,7 +21,45 @@ mutable struct TTestObj{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     end
 end
 
-function ttest_fit(ttest::TTestObj{Tt, Tl, Tarray}, traces, labels) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+mutable struct TTestSingle{Tt<:AbstractFloat, Tl<:Integer}
+    moments::UniVarMomentsAcc{Tt, Tl, Array}
+    order::Int
+    ns::Int
+
+    function TTestSingle{Tt, Tl}(order::Int, ns::Int) where {Tt<:AbstractFloat, Tl<:Integer}
+        moments = UniVarMomentsAcc{Tt, Tl, Array}(2*order, ns, 2)
+        new(moments, order, ns)
+    end
+end
+
+mutable struct TTestChunked{Tt<:AbstractFloat, Tl<:Integer}
+    chunksize::NTuple{2, Int}
+    chunk_map::Dict{UnitRange, TTestSingle}
+    order::Int
+    ns::Int
+
+    function TTestChunked{Tt, Tl}(order::Int, ns::Int, chunksize::NTuple{2, Int}) where {Tt<:AbstractFloat, Tl<:Integer}
+        slices = tiled_view(1:ns, (chunksize[2], ))
+        chunk_map = Dict(slice => TTestSingle{Tt, Tl}(order, size(slice, 1)) for slice in slices)
+        new(chunksize, chunk_map, ns)
+    end
+end
+
+function ttest_fit!(ttest::TTestSingle{Tt, Tl}, traces, labels) where {Tt<:AbstractFloat, Tl<:Integer}
+    centered_sum_update!(ttest.moments, traces, labels)
+end
+
+function ttest_fit!(ttest::TTestChunked{Tt, Tl}, traces, labels) where {Tt<:AbstractFloat, Tl<:Integer}
+    (trace_tiles, tile_indices) = tiled_view(traces, ttest.chunksize; return_indices=true)
+    label_tiles = tiled_view(labels, (ttest.chunksize[1], ))
+
+    for (t_tile, l_tile, tile_idx) in zip(trace_tiles, repeat(label_tiles, outer=(1, size(trace_tiles, 2))), tile_indices)
+        # NOTE: tiles which don't overlap on dimension 2 can be processed concurrently. 
+        ttest_fit!(ttest.chunk_map[tile_idx[2]], t_tile, l_tile)
+    end
+end
+
+function ttest_fit!(ttest::TTestObj{Tt, Tl, Tarray}, traces, labels) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     trace_tiles, trace_indices = tiled_view(traces, ttest.chunk_size, return_indices=true)
     label_tiles, label_indices = tiled_view(labels, (ttest.chunk_size[1], ), return_indices=true)
     
@@ -33,8 +71,20 @@ function ttest_fit(ttest::TTestObj{Tt, Tl, Tarray}, traces, labels) where {Tt<:A
     end
 end
 
+function ttest_finalize(ttest::TTestSingle{Tt, Tl}, traces, labels) where {Tt<:AbstractFloat, Tl<:Integer}
+    μ, σ2 = get_mean_and_var(ttest.moments, ttest.order)
+    t = (μ[1] - μ[2]) ./ sqrt.((σ2[1] ./ ttest.moments.totals[1]) .+ (σ2[2] ./ ttest.moments.totals[2]))
+end
+
+function ttest_finalize(ttest::TTestChunked{Tt, Tl}, traces, labels) where {Tt<:AbstractFloat, Tl<:Integer}
+    out = zeros(ttest.ns)
+    Threads.@threads for slice in collect(keys(ttest.chunk_map))
+        out[slice] .= ttest_finalize(ttest.chunk_map[slice])
+    end
+    out
+end
+
 function ttest_finalize(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, order::Int)::Vector where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    acc = 
     if acc.nl != 2
         error("TTest must be performed with UniVarMomentsAcc with nl=2, got nl=$(acc.nl)")
     end

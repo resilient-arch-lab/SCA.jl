@@ -18,6 +18,22 @@ using Statistics
     @test all(res1 .≈ res2)
 end
 
+@testset "TTest & TTestChunked" begin
+    t = rand(Float64, 2000, 1000)
+    l = rand(UInt8, 2000)
+
+    ttest1 = TTest.TTestSingle{Float64, UInt8}(2, 1000)
+    ttest2 = TTest.TTestChunked{Float64, UInt8}(2, 1000, (2000, 200))
+
+    TTest.ttest_fit!(ttest1, t, l)
+    TTest.ttest_fit!(ttest2, t, l)
+
+    res1 = TTest.ttest_finalize(ttest1)
+    res2 = TTest.ttest_finalize(ttest2)
+
+    @test all(res1 .≈ res2)
+end
+
 # Test precision / stability of centered sum merging formula [Prop. 2.1, 10.2172/1028931]
 # with reference to a single centered sum calculation on the same data, requiring no merge
 # operation. Initial results are inconsistent even with a relative tolarance of 1. 
