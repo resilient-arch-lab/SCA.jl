@@ -38,27 +38,13 @@ mutable struct SNRMoments{Tt<:AbstractFloat, Tl<:Integer}
     end
 end
 
-# TODO: depricate `SNRMomentsChunked` in favor of `SNRMomentsChunkedMulti`
 mutable struct SNRMomentsChunked{Tt<:AbstractFloat, Tl<:Integer}
-    chunksize::Int  # chunks may not be of exactly `chunksize` dim
-    chunk_map::Dict{UnitRange, SNRMoments{Tt, Tl}}
-    nl::Int
-    ns::Int
-
-    function SNRMomentsChunked{Tt, Tl}(ns::Int, nl::Int, chunksize::Int = 1000) where {Tt<:AbstractFloat, Tl<:Integer}
-        slices = tiled_view(1:ns, (chunksize, ))
-        chunk_map = Dict(slice => SNRMoments{Tt, Tl}(size(slice, 1), nl) for slice in slices)
-        new(chunksize, chunk_map, nl, ns)
-    end
-end
-
-mutable struct SNRMomentsChunkedMulti{Tt<:AbstractFloat, Tl<:Integer}
     chunksize::NTuple{2, Int}  # chunks may not be of exactly `chunksize` dim
     chunk_map::Dict{UnitRange, SNRMoments{Tt, Tl}}
     nl::Int
     ns::Int
 
-    function SNRMomentsChunkedMulti{Tt, Tl}(ns::Int, nl::Int, chunksize::NTuple{2, Int} = (10000, 1000)) where {Tt<:AbstractFloat, Tl<:Integer}
+    function SNRMomentsChunked{Tt, Tl}(ns::Int, nl::Int, chunksize::NTuple{2, Int} = (10000, 1000)) where {Tt<:AbstractFloat, Tl<:Integer}
         slices = tiled_view(1:ns, (chunksize[2], ))
         chunk_map = Dict(slice => SNRMoments{Tt, Tl}(size(slice, 1), nl) for slice in slices)
         new(chunksize, chunk_map, nl, ns)
@@ -102,13 +88,6 @@ function SNR_fit!(snr::Union{SNRMoments{Tt, Tl}, SNROrdered{Tt, Tl}}, traces::Ab
 end
 
 function SNR_fit!(snr::SNRMomentsChunked{Tt, Tl}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:Real, Tl<:Real}
-    # TODO: these can be dispatched asynchronously 
-    for trace_slice in collect(keys(snr.chunk_map))
-        SNR_fit!(snr.chunk_map[trace_slice], traces[:, trace_slice], labels[:])
-    end
-end
-
-function SNR_fit!(snr::SNRMomentsChunkedMulti{Tt, Tl}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:Real, Tl<:Real}
     (trace_tiles, tile_indices) = tiled_view(traces, snr.chunksize; return_indices=true)
     label_tiles = tiled_view(labels, (snr.chunksize[1], ))
 
@@ -138,7 +117,7 @@ function SNR_finalize(snr::SNRMoments{Tt, Tl})::Vector where {Tt<:Real, Tl<:Inte
     vec(signals ./ noises)
 end
 
-function SNR_finalize(snr::Union{SNRMomentsChunked{Tt, Tl}, SNRMomentsChunkedMulti{Tt, Tl}})::Vector where {Tt<:Real, Tl<:Integer}
+function SNR_finalize(snr::SNRMomentsChunked{Tt, Tl})::Vector where {Tt<:Real, Tl<:Integer}
     out = zeros(snr.ns)
     Threads.@threads for slice in collect(keys(snr.chunk_map))
         out[slice] .= SNR_finalize(snr.chunk_map[slice])
