@@ -209,23 +209,4 @@ function get_mean_and_var(m::UniVarMomentsAcc, d::Int)
     end
 end
 
-function _merge_from_test()
-    a = rand(10000, 20)
-    l = rand(UInt8, 10000)
-    m1 = UniVarMomentsAcc{Float64, UInt8, Array}(6, 20, 256)
-    m2 = UniVarMomentsAcc{Float64, UInt8, Array}(6, 20, 256)
-
-    a_tiles, l_tiles = tiled_view(a, (5000, 20)), tiled_view(l, (5000, ))
-
-    centered_sum_update!(m1, a, l)
-    for (a_tile, l_tile) in zip(a_tiles, l_tiles)
-        centered_sum_update!(m2, a_tile, l_tile)
-    end
-
-    # 
-    correct = all(isapprox.(m1.moments, m2.moments; rtol=1e-2))
-    println("Results approximately equal: $(correct)")
-    m1, m2
-end
-
 end  # module Moments

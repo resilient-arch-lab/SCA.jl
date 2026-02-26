@@ -7,7 +7,7 @@ using BenchmarkTools
 # The BenchmarkGroup seems to be required to be declared globally
 bench_suite = BenchmarkGroup(["SNR", ])
 
-function bench_SNRMoments(TArray::Type{T} = Array) where {T}
+function bench_SNRMoments(TArray::Type = Array)
     t = TArray(rand(Float32, 500000, 1000))
     l = TArray(rand(UInt8, 500000))
 

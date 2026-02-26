@@ -112,13 +112,11 @@ function SNR_fit!(snr::SNRMomentsChunkedMulti{Tt, Tl}, traces::AbstractMatrix{Tt
     (trace_tiles, tile_indices) = tiled_view(traces, snr.chunksize; return_indices=true)
     label_tiles = tiled_view(labels, (snr.chunksize[1], ))
 
-    # TODO: l_tile must be broadcast to  
     for (t_tile, l_tile, tile_idx) in zip(trace_tiles, repeat(label_tiles, outer=(1, size(trace_tiles, 2))), tile_indices)
         # NOTE: tiles which don't overlap on dimension 2 can be processed concurrently. 
         SNR_fit!(snr.chunk_map[tile_idx[2]], t_tile, l_tile)
     end
 end
-
 
 function SNR_finalize(snr::SNRBasic{Tt, Tl})::Vector where {Tt<:Real, Tl<:Real}
     means = snr.sums ./ snr.totals
