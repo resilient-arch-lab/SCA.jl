@@ -21,7 +21,6 @@ SCAGPUArraysExt = "GPUArrays"
 
 [compat]
 Atomix = "1.1.2"
-BenchmarkTools = "1.6.3"
 Combinatorics = "1.1.0"
 Distributions = "0.25.123"
 GPUArrays = "11.4.1"
