@@ -11,6 +11,7 @@ using .Utils
 
 using Random
 using KernelAbstractions, Atomix
+import AcceleratedKernels as AK
 using Base: convert
 
 # TODO: I'm not convinced this actually needs to be parameterized on the array type, and it
@@ -48,6 +49,14 @@ end
     @inbounds Atomix.@atomic sums[l_idx, J] += t_sh[i, j]
     if J == 1
         @inbounds Atomix.@atomic totals[l_idx] += 1
+    end
+end
+
+function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
+    AK.foraxes(traces, 1) do i
+        l_i = convert(Int32, labels[i]+1)
+        @inbounds sums[l_i, 1:lastindex(sums, 2)] .+= traces[i, 1:lastindex(traces, 2)]
+        @inbounds totals[l_i] += 1
     end
 end
 
