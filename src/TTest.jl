@@ -6,21 +6,6 @@ using .Utils
 include("Moments.jl")
 using .Moments
 
-# Can't be named TTest because thats already what the module is named 
-mutable struct TTestObj{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    accumulators::Vector{UniVarMomentsAcc{Tt, Tl, Tarray}}
-    const order::UInt
-    const ns::UInt
-    const nl::UInt
-    const chunk_size::NTuple{2, Int}
-
-    function TTestObj{Tt, Tl, Tarray}(order, ns, nl, chunk_size::NTuple{2}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-        # The accumulators all expect a full size chunk.
-        accumulators = [UniVarMomentsAcc{Tt, Tl, Tarray}(order, chunk_size[2], nl) for _ in 1:cld(ns, chunk_size[2])]
-        new(accumulators, order, ns, nl, chunk_size)
-    end
-end
-
 mutable struct TTestSingle{Tt<:AbstractFloat, Tl<:Integer}
     moments::UniVarMomentsAcc{Tt, Tl, Array}
     order::Int
@@ -56,18 +41,6 @@ function ttest_fit!(ttest::TTestChunked{Tt, Tl}, traces, labels) where {Tt<:Abst
     for (t_tile, l_tile, tile_idx) in zip(trace_tiles, repeat(label_tiles, outer=(1, size(trace_tiles, 2))), tile_indices)
         # NOTE: tiles which don't overlap on dimension 2 can be processed concurrently. 
         ttest_fit!(ttest.chunk_map[tile_idx[2]], t_tile, l_tile)
-    end
-end
-
-function ttest_fit!(ttest::TTestObj{Tt, Tl, Tarray}, traces, labels) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    trace_tiles, trace_indices = tiled_view(traces, ttest.chunk_size, return_indices=true)
-    label_tiles, label_indices = tiled_view(labels, (ttest.chunk_size[1], ), return_indices=true)
-    
-    for chunk in axes(traces, 1)
-        for yslice in axes(trace_tiles, 2)
-            res = centered_sum_update!(ttest.accumulators[chunk], trace_tiles[chunk, yslice], label_tiles[chunk])
-            # I need to figure out how to run the whole centered_sum_update inplace
-        end
     end
 end
 
@@ -118,10 +91,6 @@ function ttest_finalize(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, order::Int)::Vect
         @inbounds t .= (u1 - u2) ./ sqrt.((v1 ./ acc.totals[1]) .+ (v2 ./ acc.totals[2]))
         return t
     end
-end
-
-function ttest_finalize(ttest::TTestObj{Tt, Tl, Tarray})::Vector where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    result = vcat(ttest_finalize.(ttest.accumulators, ttest.order))
 end
 
 
