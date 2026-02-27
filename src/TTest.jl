@@ -41,7 +41,7 @@ mutable struct TTestChunked{Tt<:AbstractFloat, Tl<:Integer}
     function TTestChunked{Tt, Tl}(order::Int, ns::Int, chunksize::NTuple{2, Int}) where {Tt<:AbstractFloat, Tl<:Integer}
         slices = tiled_view(1:ns, (chunksize[2], ))
         chunk_map = Dict(slice => TTestSingle{Tt, Tl}(order, size(slice, 1)) for slice in slices)
-        new(chunksize, chunk_map, ns)
+        new(chunksize, chunk_map, order, ns)
     end
 end
 
@@ -71,12 +71,14 @@ function ttest_fit!(ttest::TTestObj{Tt, Tl, Tarray}, traces, labels) where {Tt<:
     end
 end
 
-function ttest_finalize(ttest::TTestSingle{Tt, Tl}, traces, labels) where {Tt<:AbstractFloat, Tl<:Integer}
-    μ, σ2 = get_mean_and_var(ttest.moments, ttest.order)
-    t = (μ[1] - μ[2]) ./ sqrt.((σ2[1] ./ ttest.moments.totals[1]) .+ (σ2[2] ./ ttest.moments.totals[2]))
+function ttest_finalize(ttest::TTestSingle{Tt, Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+    μ, σ = get_mean_and_var(ttest.moments, ttest.order)
+    μ1, μ2 = view(μ, 1, :), view(μ, 2, :) 
+    σ1, σ2 = view(σ, 1, :), view(σ, 2, :) 
+    t = (μ1 - μ2) ./ sqrt.((σ1 ./ ttest.moments.totals[1]) .+ (σ2 ./ ttest.moments.totals[2]))
 end
 
-function ttest_finalize(ttest::TTestChunked{Tt, Tl}, traces, labels) where {Tt<:AbstractFloat, Tl<:Integer}
+function ttest_finalize(ttest::TTestChunked{Tt, Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     out = zeros(ttest.ns)
     Threads.@threads for slice in collect(keys(ttest.chunk_map))
         out[slice] .= ttest_finalize(ttest.chunk_map[slice])

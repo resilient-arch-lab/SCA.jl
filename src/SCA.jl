@@ -1,5 +1,5 @@
 module SCA
-export SNR, Moments, Utils, Attack
+export SNR, Moments, Utils, Attack, TTest
 
 
 include("SNR.jl")

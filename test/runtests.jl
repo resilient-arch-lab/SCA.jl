@@ -20,7 +20,7 @@ end
 
 @testset "TTest & TTestChunked" begin
     t = rand(Float64, 2000, 1000)
-    l = rand(UInt8, 2000)
+    l = UInt8.(rand([0, 1], 2000))
 
     ttest1 = TTest.TTestSingle{Float64, UInt8}(2, 1000)
     ttest2 = TTest.TTestChunked{Float64, UInt8}(2, 1000, (2000, 200))
