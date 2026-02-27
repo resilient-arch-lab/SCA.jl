@@ -1,6 +1,6 @@
 module SCAGPUArraysExt
 
-using SCA: Moments
+using SCA
 using GPUArrays
 using KernelAbstractions
 
@@ -28,8 +28,6 @@ function Moments.centered_sum_update!(acc::Moments.UniVarMomentsAcc{Tt, Tl, Tarr
     # This has to be performed on CPU for now, its a pretty complicated OP
     merge_from!(acc, Tarray(moments), Tarray(totals))
 end
-
-
 
 
 end
