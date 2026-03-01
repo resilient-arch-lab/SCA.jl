@@ -56,3 +56,16 @@ end
     println("Moment merging algorithm test case percent error per order $(1:m1.order)")
     display(vec(mean(prcnt_err, dims=(1, 3))))
 end
+
+@testset "AcceleratedKernels moments tests" begin
+    a = rand(10000, 20)
+    l = rand(UInt8, 10000)
+    m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
+    m2 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
+
+    Moments.centered_sum_update!(m1, a, l)
+    Moments.centered_sum_update_ak!(m2, a, l)
+
+    correct = all(isapprox.(m1.moments, m2.moments))
+    @test correct == true
+end

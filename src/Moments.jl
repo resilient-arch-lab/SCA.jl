@@ -56,9 +56,9 @@ end
 function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     @inbounds AK.foraxes(traces, 1) do i
         l_i = convert(Int32, labels[i]+1)
-        totals[l_i] += 1
+        Atomix.@atomic totals[l_i] += 1
         for j in axes(traces, 2)
-            sums[l_i, j] += traces[i, j]
+            Atomix.@atomic sums[l_i, j] += traces[i, j]
         end
     end
 end
@@ -110,6 +110,23 @@ end
     end
 end
 
+function centered_sum_kern_ak!(moments::AbstractArray{Tt, 3}, traces::AbstractArray, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+    order = size(moments, 2)
+
+    @inbounds AK.foraxes(traces, 1) do i
+        l_i = convert(Int32, labels[i]+1)
+        for j in axes(traces, 2)
+            t_update = traces[i, j] - moments[l_i, 1, j]
+            pow = t_update
+            for d in 2:order
+                pow *= t_update
+                Atomix.@atomic moments[l_i, d, j] += pow
+            end
+        end
+    end
+
+end
+
 # Update the estimation of centered sums in `acc`
 # Note: Tarray must be `Array`, as the struct must live in CPU memory. However, if
 # `traces` and `labels` are GPU arrays, as much computation as possible will be done
@@ -134,6 +151,24 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
     # compute centered sums
     _centered_sum_kern(moments, traces, labels, ndrange=size(traces))
     # KernelAbstractions.synchronize(get_backend(sums))
+
+    # This has to be performed on CPU for now, its a pretty complicated OP
+    merge_from!(acc, Tarray(moments), Tarray(totals))
+end
+
+function centered_sum_update_ak!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+    # Initialize intermediate values
+    sums = fill!(similar(traces, Tt, acc.nl, acc.ns), 0)
+    moments = fill!(similar(traces, Tt, size(acc.moments)), 0)
+    totals = fill!(similar(traces, UInt32, size(acc.totals)), 0)
+
+    label_wise_sum_ak!(traces, labels, sums, totals)
+
+    # find means
+    @. moments[:, 1, :] = sums / totals
+
+    # compute centered sums
+    centered_sum_kern_ak!(moments, traces, labels)
 
     # This has to be performed on CPU for now, its a pretty complicated OP
     merge_from!(acc, Tarray(moments), Tarray(totals))
