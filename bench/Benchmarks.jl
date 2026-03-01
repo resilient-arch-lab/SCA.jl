@@ -41,6 +41,7 @@ function bench_SNRMoments(TArray::Type = Array)
     run(bench_suite, verbose = true, seconds = 10)
 end
 
+# AcceleratedKernels code is faster on CPU and GPU
 function bench_Moments_label_wise_sum(TArray::Type = Array)
     t = TArray(rand(Float32, 500000, 1000))
     l = TArray(rand(UInt8, 500000))
@@ -56,6 +57,7 @@ function bench_Moments_label_wise_sum(TArray::Type = Array)
     run(bench_suite, verbose = true, seconds = 10)
 end
 
+# AcceleratedKernels code is faster on CPU and GPU
 function bench_Moments_centered_sum_update(TArray::Type = Array)
     t = TArray(rand(Float32, 500000, 1000))
     l = TArray(rand(UInt8, 500000))
