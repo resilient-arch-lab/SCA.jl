@@ -26,7 +26,7 @@ function Moments.centered_sum_update!(acc::Moments.UniVarMomentsAcc{Tt, Tl, Tarr
     # KernelAbstractions.synchronize(get_backend(sums))
 
     # This has to be performed on CPU for now, its a pretty complicated OP
-    merge_from!(acc, Tarray(moments), Tarray(totals))
+    Moments.merge_from!(acc, Tarray(moments), Tarray(totals))
 end
 
 
