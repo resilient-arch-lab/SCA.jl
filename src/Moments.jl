@@ -52,11 +52,14 @@ end
     end
 end
 
+# Works on CPU and GPU
 function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
-    AK.foraxes(traces, 1) do i
+    @inbounds AK.foraxes(traces, 1) do i
         l_i = convert(Int32, labels[i]+1)
-        @inbounds sums[l_i, 1:lastindex(sums, 2)] .+= traces[i, 1:lastindex(traces, 2)]
-        @inbounds totals[l_i] += 1
+        totals[l_i] += 1
+        for j in axes(traces, 2)
+            sums[l_i, j] += traces[i, j]
+        end
     end
 end
 
