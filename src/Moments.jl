@@ -11,6 +11,7 @@ using .Utils
 
 using Random
 using KernelAbstractions, Atomix
+import AcceleratedKernels as AK
 using Base: convert
 
 # TODO: I'm not convinced this actually needs to be parameterized on the array type, and it
@@ -30,6 +31,7 @@ mutable struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:Abstract
 end
 
 # works on CPU and GPU
+# Depricated in favor of AcceleratedKernels kernels (label_wise_sum_ak!)
 @kernel function label_wise_sum_shared!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     I, J = @index(Global, NTuple)  # I: trace, J: y_offset
     i, j = @index(Local, NTuple)
@@ -48,6 +50,17 @@ end
     @inbounds Atomix.@atomic sums[l_idx, J] += t_sh[i, j]
     if J == 1
         @inbounds Atomix.@atomic totals[l_idx] += 1
+    end
+end
+
+# Works on CPU and GPU
+function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
+    @inbounds AK.foraxes(traces, 1) do i
+        l_i = convert(Int32, labels[i]+1)
+        Atomix.@atomic totals[l_i] += 1
+        for j in axes(traces, 2)
+            Atomix.@atomic sums[l_i, j] += traces[i, j]
+        end
     end
 end
 
@@ -76,6 +89,7 @@ function label_wise_sum_cpu!(traces::AbstractArray, labels::AbstractArray, sums:
 end
 
 # Centered sum update kernel
+# Depricated in favor of AcceleratedKernels kernels (centered_sum_kern_ak!)
 @kernel function centered_sum_kern!(moments::AbstractArray{Tt, 3}, traces::AbstractArray, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     i, j = @index(Local, NTuple)  # i: assumed to be 1, j: trace_y_offset_local
     I, J = @index(Global, NTuple)  # I: trace, J: trace_y_offset_global
@@ -98,6 +112,23 @@ end
     end
 end
 
+function centered_sum_kern_ak!(moments::AbstractArray{Tt, 3}, traces::AbstractArray, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+    order = size(moments, 2)
+
+    @inbounds AK.foraxes(traces, 1) do i
+        l_i = convert(Int32, labels[i]+1)
+        for j in axes(traces, 2)
+            t_update = traces[i, j] - moments[l_i, 1, j]
+            pow = t_update
+            for d in 2:order
+                pow *= t_update
+                Atomix.@atomic moments[l_i, d, j] += pow
+            end
+        end
+    end
+
+end
+
 # Update the estimation of centered sums in `acc`
 # Note: Tarray must be `Array`, as the struct must live in CPU memory. However, if
 # `traces` and `labels` are GPU arrays, as much computation as possible will be done
@@ -108,20 +139,13 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
     moments = fill!(similar(traces, Tt, size(acc.moments)), 0)
     totals = fill!(similar(traces, UInt32, size(acc.totals)), 0)
 
-    # compile kernels
-    _label_wise_sum_kern = label_wise_sum_shared!(get_backend(traces), (4, 64))
-    _centered_sum_kern = centered_sum_kern!(get_backend(moments), (1, 256))
-
-    _label_wise_sum_kern(traces, labels, sums, totals, ndrange=size(traces))
-    # label_wise_sum_cpu!(traces, labels, sums, totals)
-    # KernelAbstractions.synchronize(get_backend(sums))
+    label_wise_sum_ak!(traces, labels, sums, totals)
 
     # find means
     @. moments[:, 1, :] = sums / totals
 
     # compute centered sums
-    _centered_sum_kern(moments, traces, labels, ndrange=size(traces))
-    # KernelAbstractions.synchronize(get_backend(sums))
+    centered_sum_kern_ak!(moments, traces, labels)
 
     # This has to be performed on CPU for now, its a pretty complicated OP
     merge_from!(acc, Tarray(moments), Tarray(totals))

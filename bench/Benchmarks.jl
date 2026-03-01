@@ -3,9 +3,10 @@ export bench_SNRMoments
 
 using SCA
 using BenchmarkTools
+using KernelAbstractions
 
 # The BenchmarkGroup seems to be required to be declared globally
-bench_suite = BenchmarkGroup(["SNR", ])
+bench_suite = BenchmarkGroup()
 
 function bench_SNRMoments(TArray::Type = Array)
     t = TArray(rand(Float32, 500000, 1000))
@@ -15,11 +16,11 @@ function bench_SNRMoments(TArray::Type = Array)
     bench_suite["SNR"]["CPU"]["Finalize"] = BenchmarkGroup(["Single", "Chunked[all, 500]", "Chunked[all, 200]", "Chunked[100k, all]", "Chunked[100k, 500]"])
 
     snr1 = SNR.SNRMoments{Float32, UInt8}(size(t, 2), 256)
-    snr2 = SNR.SNRMomentsChunked{Float32, UInt8}(size(t, 2), 256, 500)
-    snr3 = SNR.SNRMomentsChunked{Float32, UInt8}(size(t, 2), 256, 200)
-    snr4 = SNR.SNRMomentsChunkedMulti{Float32, UInt8}(size(t, 2), 256, (100000, 500))
-    snr5 = SNR.SNRMomentsChunkedMulti{Float32, UInt8}(size(t, 2), 256, (100000, 1000))
-    snr6 = SNR.SNRMomentsChunkedMulti{Float32, UInt8}(size(t, 2), 256, (50000, 250))
+    snr2 = SNR.SNRMomentsChunked{Float32, UInt8}(size(t, 2), 256, (size(t, 2), 500))
+    snr3 = SNR.SNRMomentsChunked{Float32, UInt8}(size(t, 2), 256, (size(t, 2), 200))
+    snr4 = SNR.SNRMomentsChunked{Float32, UInt8}(size(t, 2), 256, (100000, 500))
+    snr5 = SNR.SNRMomentsChunked{Float32, UInt8}(size(t, 2), 256, (100000, 1000))
+    snr6 = SNR.SNRMomentsChunked{Float32, UInt8}(size(t, 2), 256, (50000, 250))
 
     bench_suite["SNR"]["CPU"]["Fit"]["Single"] = @benchmarkable SNR.SNR_fit!($snr1, $t, $l)
     bench_suite["SNR"]["CPU"]["Fit"]["Chunked[all, 500]"] = @benchmarkable SNR.SNR_fit!($snr2, $t, $l)
@@ -34,6 +35,35 @@ function bench_SNRMoments(TArray::Type = Array)
     bench_suite["SNR"]["CPU"]["Finalize"]["Chunked[100k, 500]"] = @benchmarkable SNR.SNR_finalize($snr4)
     bench_suite["SNR"]["CPU"]["Finalize"]["Chunked[100k, all]"] = @benchmarkable SNR.SNR_finalize($snr5)
     bench_suite["SNR"]["CPU"]["Finalize"]["Chunked[50k, 250]"] = @benchmarkable SNR.SNR_finalize($snr6)
+
+    println("Tuning benchmark parameters")
+    tune!(bench_suite)
+    run(bench_suite, verbose = true, seconds = 10)
+end
+
+# AcceleratedKernels code is faster on CPU and GPU
+function bench_Moments_label_wise_sum(TArray::Type = Array)
+    t = TArray(rand(Float32, 500000, 1000))
+    l = TArray(rand(UInt8, 500000))
+    sums = TArray(zeros(Float32, 256, 1000))
+    totals = TArray(zeros(UInt32, 256))
+
+    _label_wise_sum_kern = Moments.label_wise_sum_shared!(get_backend(t), (4, 64))
+    bench_suite["Label Wise Sum"]["Kernal Abstractions"] = @benchmarkable $_label_wise_sum_kern($t, $l, $sums, $totals, ndrange=size($t))
+    bench_suite["Label Wise Sum"]["Accelerated Kernels"] = @benchmarkable Moments.label_wise_sum_ak!($t, $l, $sums, $totals)
+
+    println("Tuning benchmark parameters")
+    tune!(bench_suite)
+    run(bench_suite, verbose = true, seconds = 10)
+end
+
+# AcceleratedKernels code is faster on CPU and GPU
+function bench_Moments_centered_sum_update(TArray::Type = Array)
+    t = TArray(rand(Float32, 500000, 1000))
+    l = TArray(rand(UInt8, 500000))
+    m1 = Moments.UniVarMomentsAcc{Float32, UInt8, Array}(10, 1000, 256)
+
+    bench_suite["Centered Sum Update"] = @benchmarkable Moments.centered_sum_update!($m1, $t, $l)
 
     println("Tuning benchmark parameters")
     tune!(bench_suite)
