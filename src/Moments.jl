@@ -171,7 +171,7 @@ function merge_from!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, M_new::Array{Tt, 3},
     totals_result = acc.totals .+ totals_new
     kern_order = Int(acc.order)
 
-    for l_idx in axes(totals_old, 1)
+    Threads.@threads for l_idx in axes(totals_old, 1)
         M_old_i = view(M_old, l_idx, :, :)
         M_new_i = view(M_new, l_idx, :, :)
 
@@ -187,7 +187,6 @@ function merge_from!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, M_new::Array{Tt, 3},
         for j in axes(δ_pows, 1)
             view(δ_pows, j, :) .= view(δ, l_idx, :).^j
         end
-        
         for p in kern_order:-1:2
             (as_input1, to_update1) = view(M_old_i, 1:p-1, :), view(M_old_i, p, :)
             (as_input2, to_update2) = view(M_new_i, 1:p-1, :), view(M_new_i, p, :)
@@ -215,6 +214,69 @@ end
 
 function merge_from!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, acc_new::UniVarMomentsAcc{Tt, Tl, Tarray}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     merge_from!(acc, acc_new.moments, acc_new.totals)
+end
+
+# This is gonna be pretty tricky to parallelize
+function merge_from_ak!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, M_new::Array{Tt, 3}, totals_new::Array{UInt32, 1}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+    if all(totals_new .== 0)
+        return nothing
+    end
+    if all(acc.totals .== 0)
+        # If this is the first estimation, the acc values can be updated directly
+        acc.moments .= M_new
+        acc.totals .= totals_new
+        return nothing
+    end
+
+    δ = view(M_new, :, 1, :) - view(acc.moments, :, 1, :)
+    δ_pows = fill!(Tarray{Tt, 2}(undef, acc.order+1, acc.ns), 0)
+    M_old, totals_old = view(acc.moments, :, :, :), view(acc.totals, :)
+    totals_result = acc.totals .+ totals_new
+    kern_order = Int(acc.order)
+
+    for l_idx in axes(totals_old, 1)
+        M_old_i = view(M_old, l_idx, :, :)
+        M_new_i = view(M_new, l_idx, :, :)
+
+        if totals_new[l_idx] == 0
+            continue
+        end
+        if totals_old[l_idx] == 0
+            M_old_i .= M_new_i
+            totals_old[l_idx] = totals_new[l_idx]
+            continue
+        end
+
+        @inbounds AK.foraxes(δ_pows, 1) do i
+            for j in axes(δ_pows, 2)
+                δ_pow_update = δ[l_idx, j]^j
+                δ_pows[i, j] = δ_pow_update
+            end
+        end
+        
+        for p in kern_order:-1:2
+            (as_input1, to_update1) = view(M_old_i, 1:p-1, :), view(M_old_i, p, :)
+            (as_input2, to_update2) = view(M_new_i, 1:p-1, :), view(M_new_i, p, :)
+
+            to_update1 .+= to_update2
+
+            for k in 1:p-2
+                δ_pows_k = δ_pows[k, :]
+                cst = binomial(k, p)
+                tmp2 = view(as_input1, p-k, :) .* ((-totals_new[l_idx]/totals_result[l_idx]).^k)
+                tmp3 = view(as_input2, p-k, :) .* ((totals_old[l_idx]/totals_result[l_idx]).^k)
+                x = tmp2 .+ tmp3
+                to_update1 .+= (δ_pows_k .* cst) .* x
+            end
+            tmp = (1/(totals_new[l_idx]^(p-1))) - ((-1/totals_old[l_idx])^(p-1))
+            tmp *= ((totals_old[l_idx] * totals_new[l_idx])/totals_result[l_idx])^p
+
+            to_update1 .+= δ_pows[p, :] .* tmp
+        end
+        view(M_old_i, 1, :) .+= (view(δ, l_idx, :) .* (totals_new[l_idx]/totals_result[l_idx]))  # update mean seperately
+    end
+    totals_old .= totals_result
+    return nothing
 end
 
 function get_mean_and_var(m::UniVarMomentsAcc, d::Int)
