@@ -31,7 +31,7 @@ mutable struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:Abstract
 end
 
 # works on CPU and GPU
-# Depricated in favor of AcceleratedKernels kernels
+# Depricated in favor of AcceleratedKernels kernels (label_wise_sum_ak!)
 @kernel function label_wise_sum_shared!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     I, J = @index(Global, NTuple)  # I: trace, J: y_offset
     i, j = @index(Local, NTuple)
@@ -89,6 +89,7 @@ function label_wise_sum_cpu!(traces::AbstractArray, labels::AbstractArray, sums:
 end
 
 # Centered sum update kernel
+# Depricated in favor of AcceleratedKernels kernels (centered_sum_kern_ak!)
 @kernel function centered_sum_kern!(moments::AbstractArray{Tt, 3}, traces::AbstractArray, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     i, j = @index(Local, NTuple)  # i: assumed to be 1, j: trace_y_offset_local
     I, J = @index(Global, NTuple)  # I: trace, J: trace_y_offset_global
