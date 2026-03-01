@@ -31,6 +31,7 @@ mutable struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:Abstract
 end
 
 # works on CPU and GPU
+# Depricated in favor of AcceleratedKernels kernels
 @kernel function label_wise_sum_shared!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     I, J = @index(Global, NTuple)  # I: trace, J: y_offset
     i, j = @index(Local, NTuple)
@@ -132,31 +133,6 @@ end
 # `traces` and `labels` are GPU arrays, as much computation as possible will be done
 # on GPU before finalizing results on the CPU.
 function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    # Initialize intermediate values
-    sums = fill!(similar(traces, Tt, acc.nl, acc.ns), 0)
-    moments = fill!(similar(traces, Tt, size(acc.moments)), 0)
-    totals = fill!(similar(traces, UInt32, size(acc.totals)), 0)
-
-    # compile kernels
-    _label_wise_sum_kern = label_wise_sum_shared!(get_backend(traces), (4, 64))
-    _centered_sum_kern = centered_sum_kern!(get_backend(moments), (1, 256))
-
-    _label_wise_sum_kern(traces, labels, sums, totals, ndrange=size(traces))
-    # label_wise_sum_cpu!(traces, labels, sums, totals)
-    # KernelAbstractions.synchronize(get_backend(sums))
-
-    # find means
-    @. moments[:, 1, :] = sums / totals
-
-    # compute centered sums
-    _centered_sum_kern(moments, traces, labels, ndrange=size(traces))
-    # KernelAbstractions.synchronize(get_backend(sums))
-
-    # This has to be performed on CPU for now, its a pretty complicated OP
-    merge_from!(acc, Tarray(moments), Tarray(totals))
-end
-
-function centered_sum_update_ak!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     # Initialize intermediate values
     sums = fill!(similar(traces, Tt, acc.nl, acc.ns), 0)
     moments = fill!(similar(traces, Tt, size(acc.moments)), 0)
