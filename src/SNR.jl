@@ -87,13 +87,23 @@ function SNR_fit!(snr::Union{SNRMoments{Tt, Tl}, SNROrdered{Tt, Tl}}, traces::Ab
     centered_sum_update!(snr.moments, traces, labels)
 end
 
+# function SNR_fit!(snr::SNRMomentsChunked{Tt, Tl}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:Real, Tl<:Real}
+#     (trace_tiles, tile_indices) = tiled_view(traces, snr.chunksize; return_indices=true)
+#     label_tiles = tiled_view(labels, (snr.chunksize[1], ))
+
+#     for (t_tile, l_tile, tile_idx) in zip(trace_tiles, repeat(label_tiles, outer=(1, size(trace_tiles, 2))), tile_indices)
+#         SNR_fit!(snr.chunk_map[tile_idx[2]], t_tile, l_tile)
+#     end
+# end
+
 function SNR_fit!(snr::SNRMomentsChunked{Tt, Tl}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:Real, Tl<:Real}
     (trace_tiles, tile_indices) = tiled_view(traces, snr.chunksize; return_indices=true)
     label_tiles = tiled_view(labels, (snr.chunksize[1], ))
 
-    for (t_tile, l_tile, tile_idx) in zip(trace_tiles, repeat(label_tiles, outer=(1, size(trace_tiles, 2))), tile_indices)
-        # NOTE: tiles which don't overlap on dimension 2 can be processed concurrently. 
-        SNR_fit!(snr.chunk_map[tile_idx[2]], t_tile, l_tile)
+    for batch in axes(trace_tiles, 1)
+        Threads.@threads for tile in axes(trace_tiles, 2)
+            SNR_fit!(snr.chunk_map[tile_indices[batch, tile][2]], trace_tiles[batch, tile], label_tiles[batch])
+        end
     end
 end
 
