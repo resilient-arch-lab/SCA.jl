@@ -16,6 +16,7 @@ using Base: convert
 
 # TODO: I'm not convinced this actually needs to be parameterized on the array type, and it
 # does complicate things slightly.
+# TODO: This should be able to handle mutli-dimensional labels (e.g. vector labels)
 mutable struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     totals::Tarray  # Tarray is a typevar, which you can't parameterize directly 
     moments::Tarray
@@ -27,6 +28,21 @@ mutable struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:Abstract
         totals = fill!(Tarray{UInt32, 1}(undef, nl), 0)
         moments = fill!(Tarray{Tt, 3}(undef, nl, order, ns), 0)
         new(totals, moments, order, ns, nl)
+    end
+end
+
+mutable struct UniVarMomentsAccNDLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+    totals::Tarray  # Tarray is a typevar, which you can't parameterize directly 
+    moments::Tarray
+    const order::UInt
+    const ns::UInt
+    const nl::UInt
+    const l_shape::NTuple
+
+    function UniVarMomentsAcc{Tt, Tl, Tarray}(order, ns, nl, l_shape) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+        totals = fill!(Tarray{UInt32, 1}(undef, nl), 0)
+        moments = fill!(Tarray{Tt, 3}(undef, nl, order, ns), 0)
+        new(totals, moments, order, ns, nl, l_shape)
     end
 end
 
