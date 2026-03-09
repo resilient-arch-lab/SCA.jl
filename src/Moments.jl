@@ -31,21 +31,6 @@ mutable struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:Abstract
     end
 end
 
-mutable struct UniVarMomentsAccNDLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    totals::Tarray  # Tarray is a typevar, which you can't parameterize directly 
-    moments::Tarray
-    const order::UInt
-    const ns::UInt
-    const nl::UInt
-    const l_shape::NTuple
-
-    function UniVarMomentsAcc{Tt, Tl, Tarray}(order, ns, nl, l_shape) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-        totals = fill!(Tarray{UInt32, 1}(undef, nl), 0)
-        moments = fill!(Tarray{Tt, 3}(undef, nl, order, ns), 0)
-        new(totals, moments, order, ns, nl, l_shape)
-    end
-end
-
 # works on CPU and GPU
 # Depricated in favor of AcceleratedKernels kernels (label_wise_sum_ak!)
 @kernel function label_wise_sum_shared!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
