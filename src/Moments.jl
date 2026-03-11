@@ -16,6 +16,7 @@ using Base: convert
 
 # TODO: I'm not convinced this actually needs to be parameterized on the array type, and it
 # does complicate things slightly.
+# TODO: This should be able to handle mutli-dimensional labels (e.g. vector labels)
 mutable struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     totals::Tarray  # Tarray is a typevar, which you can't parameterize directly 
     moments::Tarray

@@ -9,11 +9,8 @@ using KernelAbstractions
 bench_suite = BenchmarkGroup()
 
 function bench_SNRMoments(TArray::Type = Array)
-    t = TArray(rand(Float32, 500000, 1000))
-    l = TArray(rand(UInt8, 500000))
-
-    bench_suite["SNR"]["Fit"] = BenchmarkGroup(["Single", "Chunked[all, 500]", "Chunked[all, 200]", "Chunked[100k, all]", "Chunked[100k, 500]"])
-    bench_suite["SNR"]["Finalize"] = BenchmarkGroup(["Single", "Chunked[all, 500]", "Chunked[all, 200]", "Chunked[100k, all]", "Chunked[100k, 500]"])
+    t = TArray(rand(Float32, 300000, 1000))
+    l = TArray(rand(UInt8, 300000))
 
     snr1 = SNR.SNRMoments{Float32, UInt8}(size(t, 2), 256)
     snr2 = SNR.SNRMomentsChunked{Float32, UInt8}(size(t, 2), 256, (size(t, 2), 500))
@@ -38,7 +35,7 @@ function bench_SNRMoments(TArray::Type = Array)
 
     println("Tuning benchmark parameters")
     tune!(bench_suite)
-    run(bench_suite, verbose = true, seconds = 10)
+    run(bench_suite, verbose = true, seconds = 5)
 end
 
 # AcceleratedKernels code is faster on CPU and GPU
