@@ -56,3 +56,17 @@ end
     println("Moment merging algorithm test case percent error per order $(1:m1.order)")
     display(vec(mean(prcnt_err, dims=(1, 3))))
 end
+
+@testset "UniVarMomentsAccNDLabel tests" begin
+    a = rand(10000, 20)
+    l = rand(UInt8, 10000, 16)
+    m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
+    m2 = Moments.UniVarMomentsAccNDLabel{Float64, UInt8, Array, 1}(10, 20, 256, (16, ))
+
+    Moments.centered_sum_update!(m1, a, l[:, 1])
+    Moments.centered_sum_update!(m2, a, l)
+
+    @test all(isapprox.(m1.moments, m2.moments[1, :, :, :]))
+    prcnt_err = abs.((m1.moments .- m2.moments[1, :, :, :]) ./ m2.moments[1, :, :, :]).*100
+    display(vec(mean(prcnt_err, dims=(1, 3))))
+end

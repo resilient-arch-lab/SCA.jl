@@ -70,4 +70,38 @@ function bench_Moments_centered_sum_update(TArray::Type = Array)
     run(bench_suite, verbose = true, seconds = 10)
 end
 
+function bench_Moments_NDLabel(TArray::Type = Array)
+    t = TArray(rand(Float32, 100000, 1000))
+    l = TArray(rand(UInt8, 100000, 16))
+    m1 = Moments.UniVarMomentsAcc{Float32, UInt8, Array}(10, 1000, 256)
+    m2 = Moments.UniVarMomentsAccNDLabel{Float32, UInt8, Array, 1}(10, 1000, 256, (4, ))
+
+    bench_suite["Centered Sum Update, scalar label"] = @benchmarkable Moments.centered_sum_update!($m1, $t, $l[:, 1])
+    bench_suite["Centered Sum Update, vec 4 label"] = @benchmarkable Moments.centered_sum_update!($m2, $t, $l[:, 1:4])
+
+    println("Tuning benchmark parameters")
+    tune!(bench_suite)
+    run(bench_suite, verbose = true, seconds = 5)
+end
+
+# minimal memory overhead
+function bench_chunked_memory_use()
+    t = rand(Float32, 500000, 1000)
+    l = rand(UInt8, 500000)
+    dset_size = (sizeof(eltype(t)) * prod(size(t))) + (sizeof(eltype(l)) * prod(size(l)))
+    println("dataset size: $(dset_size * 1e-6) Mb")
+    
+    snr1 = SNR.SNRMomentsChunked{Float32, UInt8}(size(t, 2), 256, (50000, 1000))
+    snr2 = SNR.SNRMomentsChunked{Float32, UInt8}(size(t, 2), 256, (50000, 500))
+    snr3 = SNR.SNRMomentsChunked{Float32, UInt8}(size(t, 2), 256, (50000, 250))
+    snr4 = SNR.SNRMomentsChunked{Float32, UInt8}(size(t, 2), 256, (25000, 1000))
+    snr5 = SNR.SNRMomentsChunked{Float32, UInt8}(size(t, 2), 256, (25000, 500))
+    snr6 = SNR.SNRMomentsChunked{Float32, UInt8}(size(t, 2), 256, (25000, 250))
+
+    for (i, snr) in enumerate((snr1, snr2, snr3, snr4, snr5, snr6))
+        allocated = @allocated SNR.SNR_fit!(snr1, t, l)
+        println("SNR$i (chunksize: $(snr.chunksize)) allocated: $(allocated * 1e-6) Mb")
+    end
+end
+
 end  # module Benchmarks

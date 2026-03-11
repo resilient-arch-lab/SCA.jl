@@ -30,6 +30,22 @@ mutable struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:Abstract
     end
 end
 
+# right now this is slower than running a UniVarMomentsAccs for each label element
+mutable struct UniVarMomentsAccNDLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
+    totals::Tarray  # Tarray is a typevar, which you can't parameterize directly 
+    moments::Tarray
+    const order::UInt
+    const ns::UInt
+    const nl::UInt
+    const label_shape::NTuple{LD}
+
+    function UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}(order, ns, nl, label_shape) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD} 
+        totals = fill!(Tarray{UInt32, 1+LD}(undef, label_shape..., nl), 0)
+        moments = fill!(Tarray{Tt, 3+LD}(undef, label_shape..., nl, order, ns), 0)
+        new{Tt, Tl, Tarray, LD}(totals, moments, order, ns, nl, label_shape)
+    end
+end
+
 # works on CPU and GPU
 # Depricated in favor of AcceleratedKernels kernels (label_wise_sum_ak!)
 @kernel function label_wise_sum_shared!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
@@ -60,6 +76,18 @@ function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractVector{T
         Atomix.@atomic totals[l_i] += 1
         for j in axes(traces, 2)
             Atomix.@atomic sums[l_i, j] += traces[i, j]
+        end
+    end
+end
+
+function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
+    @inbounds AK.foraxes(traces, 1) do i
+        for l in axes(labels, 2)
+            l_i = convert(Int32, labels[i, l]+1)
+            Atomix.@atomic totals[l, l_i] += 1
+            for j in axes(traces, 2)
+                Atomix.@atomic sums[l, l_i, j] += traces[i, j]
+            end
         end
     end
 end
@@ -112,7 +140,7 @@ end
     end
 end
 
-function centered_sum_kern_ak!(moments::AbstractArray{Tt, 3}, traces::AbstractArray, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+function centered_sum_kern_ak!(moments::AbstractArray{Tt, 3}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     order = size(moments, 2)
 
     @inbounds AK.foraxes(traces, 1) do i
@@ -126,7 +154,70 @@ function centered_sum_kern_ak!(moments::AbstractArray{Tt, 3}, traces::AbstractAr
             end
         end
     end
+end
 
+function centered_sum_kern_ak!(moments::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+    order = size(moments, 3)
+
+    @inbounds AK.foraxes(traces, 1) do i
+        for l in axes(labels, 2)
+            l_i = convert(Int32, labels[i, l]+1)
+            for j in axes(traces, 2)
+                t_update = traces[i, j] - moments[l, l_i, 1, j]
+                pow = t_update
+                for d in 2:order
+                    pow *= t_update
+                    Atomix.@atomic moments[l, l_i, d, j] += pow
+                end
+            end
+        end
+    end
+end
+
+function centered_sum_cpu!(moments::AbstractArray{Tt, 3}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+    order = size(moments, 2)
+    samples_per_thread = cld(size(traces, 2), Threads.nthreads())
+    trace_tiles = tiled_view(traces, (size(traces, 1), samples_per_thread))
+    moment_tiles = tiled_view(moments, (size(moments)[1:2]..., samples_per_thread))
+
+    Threads.@threads for tile_idx in axes(trace_tiles, 2)
+        trace_tile = trace_tiles[1, tile_idx]
+        moment_tile = moment_tiles[1, 1, 1, tile_idx]
+        for i in axes(trace_tile, 1)
+            l_i = convert(Int32, labels[i]+1)
+            t_update = trace_tile[i, :] .- moment_tile[l_i, 1, :]
+            pow = copy(t_update)
+
+            for d in 2:order
+                pow .*= t_update
+                moment_tile[l_i, d, :] .+= pow
+            end
+        end
+    end
+end
+
+function centered_sum_cpu!(moments::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+    order = size(moments, 3)
+    samples_per_thread = cld(size(traces, 2), Threads.nthreads())
+    trace_tiles = tiled_view(traces, (size(traces, 1), samples_per_thread))
+    moment_tiles = tiled_view(moments, (size(moments)[1:3]..., samples_per_thread))
+
+    Threads.@threads for tile_idx in axes(trace_tiles, 2)
+        trace_tile = trace_tiles[1, tile_idx]
+        moment_tile = moment_tiles[1, 1, 1, tile_idx]
+        for i in axes(trace_tile, 1)
+            for l in axes(moment_tile, 1)
+                l_i = convert(Int32, labels[i, l]+1)
+                t_update = trace_tile[i, :] .- moment_tile[l, l_i, 1, :]
+                pow = copy(t_update)
+
+                for d in 2:order
+                    pow .*= t_update
+                    moment_tile[l, l_i, d, :] .+= pow
+                end
+            end
+        end
+    end
 end
 
 # Update the estimation of centered sums in `acc`
@@ -151,6 +242,24 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
     merge_from!(acc, Tarray(moments), Tarray(totals))
 end
 
+function centered_sum_update!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
+    # Initialize intermediate values
+    sums = fill!(similar(traces, Tt, acc.label_shape..., acc.nl, acc.ns), 0)
+    moments = fill!(similar(traces, Tt, size(acc.moments)), 0)
+    totals = fill!(similar(traces, UInt32, size(acc.totals)), 0)
+
+    label_wise_sum_ak!(traces, labels, sums, totals)
+
+    # find means
+    @. moments[:, :, 1, :] = sums / totals
+
+    # compute centered sums
+    centered_sum_cpu!(moments, traces, labels)
+
+    # This has to be performed on CPU for now, its a pretty complicated OP
+    merge_from!(acc, Tarray(moments), Tarray(totals))
+end
+
 # Precision (even with Float64) seems to degrade from performing the same 
 # computation in a single centered_sum_update! for the same data. Use of 
 # this should be minimized, prefer larger update batches whenever possible
@@ -168,10 +277,10 @@ function merge_from!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, M_new::Array{Tt, 3},
     δ = view(M_new, :, 1, :) - view(acc.moments, :, 1, :)
     δ_pows = fill!(Tarray{Tt, 2}(undef, acc.order+1, acc.ns), 0)
     M_old, totals_old = view(acc.moments, :, :, :), view(acc.totals, :)
-    totals_result = acc.totals .+ totals_new
+    totals_result = totals_old .+ totals_new
     kern_order = Int(acc.order)
 
-    Threads.@threads for l_idx in axes(totals_old, 1)
+    Threads.@threads for l_idx in axes(totals_old, 2)
         M_old_i = view(M_old, l_idx, :, :)
         M_new_i = view(M_new, l_idx, :, :)
 
@@ -214,6 +323,67 @@ end
 
 function merge_from!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, acc_new::UniVarMomentsAcc{Tt, Tl, Tarray}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     merge_from!(acc, acc_new.moments, acc_new.totals)
+end
+
+function merge_from!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, 1}, M_new::Array{Tt, 4}, totals_new::Array{UInt32, 2}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+    if all(totals_new .== 0)
+        return nothing
+    end
+    if all(acc.totals .== 0)
+        # If this is the first estimation, the acc values can be updated directly
+        acc.moments .= M_new
+        acc.totals .= totals_new
+        return nothing
+    end
+
+    for l in axes(acc.totals, 1)
+        δ = view(M_new, l, :, 1, :) - view(acc.moments, l, :, 1, :)
+        δ_pows = fill!(Tarray{Tt, 2}(undef, acc.order+1, acc.ns), 0)
+        M_old_l, totals_old_l = view(acc.moments, l, :, :, :), view(acc.totals, l, :)
+        totals_new_l = view(totals_new, l, :)
+        totals_result = totals_old_l .+ totals_new_l
+        kern_order = Int(acc.order)
+
+        Threads.@threads for l_idx in axes(totals_old_l, 2)
+            M_old_i = view(M_old_l, l_idx, :, :)
+            M_new_i = view(M_new, l, l_idx, :, :)
+
+            if totals_new_l[l_idx] == 0
+                continue
+            end
+            if totals_old_l[l_idx] == 0
+                M_old_i .= M_new_i
+                totals_old_l[l_idx] = totals_new_l[l_idx]
+                continue
+            end
+
+            for j in axes(δ_pows, 1)
+                view(δ_pows, j, :) .= view(δ, l_idx, :).^j
+            end
+            for p in kern_order:-1:2
+                (as_input1, to_update1) = view(M_old_i, 1:p-1, :), view(M_old_i, p, :)
+                (as_input2, to_update2) = view(M_new_i, 1:p-1, :), view(M_new_i, p, :)
+
+                to_update1 .+= to_update2
+
+                for k in 1:p-2
+                    δ_pows_k = δ_pows[k, :]
+                    cst = binomial(k, p)
+                    tmp2 = view(as_input1, p-k, :) .* ((-totals_new_l[l_idx]/totals_result[l_idx]).^k)
+                    tmp3 = view(as_input2, p-k, :) .* ((totals_old_l[l_idx]/totals_result[l_idx]).^k)
+                    x = tmp2 .+ tmp3
+                    to_update1 .+= (δ_pows_k .* cst) .* x
+                end
+                tmp = (1/(totals_new_l[l_idx]^(p-1))) - ((-1/totals_old_l[l_idx])^(p-1))
+                tmp *= ((totals_old_l[l_idx] * totals_new_l[l_idx])/totals_result[l_idx])^p
+
+                to_update1 .+= δ_pows[p, :] .* tmp
+            end
+            view(M_old_i, 1, :) .+= (view(δ, l_idx, :) .* (totals_new_l[l_idx]/totals_result[l_idx]))  # update mean seperately
+        end
+        totals_old_l .= totals_result
+    end
+    return nothing
 end
 
 # This is gonna be pretty tricky to parallelize
