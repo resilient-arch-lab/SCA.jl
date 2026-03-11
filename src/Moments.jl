@@ -181,7 +181,7 @@ function centered_sum_cpu!(moments::AbstractArray{Tt, 3}, traces::AbstractMatrix
     trace_tiles = tiled_view(traces, (size(traces, 1), samples_per_thread))
     moment_tiles = tiled_view(moments, (size(moments)[1:2]..., samples_per_thread))
 
-    Threads.@threads for tile_idx in axes(trace_tiles, 2)
+    @inbounds Threads.@threads for tile_idx in axes(trace_tiles, 2)
         trace_tile = trace_tiles[1, tile_idx]
         moment_tile = moment_tiles[1, 1, 1, tile_idx]
         for i in axes(trace_tile, 1)
@@ -203,7 +203,7 @@ function centered_sum_cpu!(moments::AbstractArray{Tt, 4}, traces::AbstractMatrix
     trace_tiles = tiled_view(traces, (size(traces, 1), samples_per_thread))
     moment_tiles = tiled_view(moments, (size(moments)[1:3]..., samples_per_thread))
 
-    Threads.@threads for tile_idx in axes(trace_tiles, 2)
+    @inbounds Threads.@threads for tile_idx in axes(trace_tiles, 2)
         trace_tile = trace_tiles[1, tile_idx]
         moment_tile = moment_tiles[1, 1, 1, tile_idx]
         for i in axes(trace_tile, 1)
