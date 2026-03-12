@@ -173,6 +173,20 @@ function centered_sum_kern_ak!(moments::AbstractArray{Tt, 4}, traces::AbstractMa
             end
         end
     end
+
+    # @inbounds AK.foraxes(traces, 1) do i
+    #     l_i = convert.(Int32, labels[i, :].+1)
+    #     for j in axes(traces, 2)
+    #         for l in axes(l_i, 1)
+    #             t_update = traces[i, j] - moments[l, l_i[l], 1, j]
+    #             pow = t_update
+    #             for d in 2:order
+    #                 pow *= t_update
+    #                 Atomix.@atomic moments[l, l_i[l], d, j] += pow
+    #             end
+    #         end
+    #     end
+    # end
 end
 
 function centered_sum_cpu!(moments::AbstractArray{Tt, 3}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
@@ -197,24 +211,32 @@ function centered_sum_cpu!(moments::AbstractArray{Tt, 3}, traces::AbstractMatrix
     end
 end
 
+# still VERY slow for some reason
+# (insane amount of allocations, figure out from where)
 function centered_sum_cpu!(moments::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     order = size(moments, 3)
     samples_per_thread = cld(size(traces, 2), Threads.nthreads())
     trace_tiles = tiled_view(traces, (size(traces, 1), samples_per_thread))
     moment_tiles = tiled_view(moments, (size(moments)[1:3]..., samples_per_thread))
 
-    @inbounds Threads.@threads for tile_idx in axes(trace_tiles, 2)
-        trace_tile = trace_tiles[1, tile_idx]
-        moment_tile = moment_tiles[1, 1, 1, tile_idx]
-        for i in axes(trace_tile, 1)
-            for l in axes(moment_tile, 1)
-                l_i = convert(Int32, labels[i, l]+1)
-                t_update = trace_tile[i, :] .- moment_tile[l, l_i, 1, :]
-                pow = copy(t_update)
+    Threads.@threads for tile_idx in axes(trace_tiles, 2)
+        @inbounds begin
+            trace_tile = trace_tiles[1, tile_idx]
+            moment_tile = moment_tiles[1, 1, 1, tile_idx]
+            l_i = Vector{UInt32}(undef, size(labels, 2))
+            t_update = Array{Tt, 2}(undef, size(l_i, 1), size(trace_tile, 2))
+            pow = similar(t_update)
+            
+            for i in axes(trace_tile, 1)
+                l_i .= convert.(Int32, labels[i, :].+1)
+                moment_idx = CartesianIndex.(axes(l_i, 1), l_i)
+
+                t_update .= @views reshape(trace_tile[i, :], 1, :) .- moment_tile[moment_idx, 1, :]
+                pow .= t_update
 
                 for d in 2:order
                     pow .*= t_update
-                    moment_tile[l, l_i, d, :] .+= pow
+                    moment_tile[moment_idx, d, :] .+= pow
                 end
             end
         end
@@ -243,22 +265,27 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
     merge_from!(acc, Tarray(moments), Tarray(totals))
 end
 
+# This is still horrendously slow on CPU, must fix. 
+# No overhead compared to scalar labels on GPUs though
 function centered_sum_update!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
     # Initialize intermediate values
     sums = fill!(similar(traces, Tt, acc.label_shape..., acc.nl, acc.ns), 0)
     moments = fill!(similar(traces, Tt, size(acc.moments)), 0)
     totals = fill!(similar(traces, UInt32, size(acc.totals)), 0)
 
-    label_wise_sum_ak!(traces, labels, sums, totals)
+    @time "label_wise_sum_ak!" label_wise_sum_ak!(traces, labels, sums, totals)
 
     # find means
-    @. moments[:, :, 1, :] = sums / totals
+    @time "means" @. moments[:, :, 1, :] = sums / totals
 
     # compute centered sums
-    centered_sum_cpu!(moments, traces, labels)
+    @time "centered_sum_kern_ak!" centered_sum_kern_ak!(moments, traces, labels)  # 15s
+    # @time "centered_sum_kern_ak! (scalar label loop)" for i in axes(moments, 1)  # 18s???
+    #     centered_sum_kern_ak!(view(moments, i, :, :, :), traces, view(labels, :, i))
+    # end
 
     # This has to be performed on CPU for now, its a pretty complicated OP
-    merge_from!(acc, Tarray(moments), Tarray(totals))
+    @time "merge_from!" merge_from!(acc, Tarray(moments), Tarray(totals))
 end
 
 # Precision (even with Float64) seems to degrade from performing the same 
@@ -327,6 +354,9 @@ function merge_from!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, acc_new::UniVarMomen
 end
 
 function merge_from!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, 1}, M_new::Array{Tt, 4}, totals_new::Array{UInt32, 2}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+    checkbounds(M_new, size(acc.moments)...)
+    checkbounds(totals_new, size(acc.totals)...)
+    
     if all(totals_new .== 0)
         return nothing
     end
@@ -337,7 +367,7 @@ function merge_from!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, 1}, M_new::Arr
         return nothing
     end
 
-    for l in axes(acc.totals, 1)
+    @inbounds for l in axes(acc.totals, 1)
         δ = view(M_new, l, :, 1, :) - view(acc.moments, l, :, 1, :)
         δ_pows = fill!(Tarray{Tt, 2}(undef, acc.order+1, acc.ns), 0)
         M_old_l, totals_old_l = view(acc.moments, l, :, :, :), view(acc.totals, l, :)
@@ -387,7 +417,8 @@ function merge_from!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, 1}, M_new::Arr
     return nothing
 end
 
-# This is gonna be pretty tricky to parallelize
+# This is gonna be pretty tricky to parallelize, but the CPU versions are slow and allocate a ton.
+# I could make a kernel to merge a single label, and they can be dispatched in parallel. 
 function merge_from_ak!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, M_new::Array{Tt, 3}, totals_new::Array{UInt32, 1}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     if all(totals_new .== 0)
         return nothing

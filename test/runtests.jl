@@ -59,11 +59,13 @@ end
 
 @testset "UniVarMomentsAccNDLabel tests" begin
     a = rand(10000, 20)
-    l = rand(UInt8, 10000, 16)
+    l = rand(UInt8, 10000, 4)
     m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
-    m2 = Moments.UniVarMomentsAccNDLabel{Float64, UInt8, Array, 1}(10, 20, 256, (16, ))
+    m2 = Moments.UniVarMomentsAccNDLabel{Float64, UInt8, Array, 1}(10, 20, 256, (4, ))
 
     Moments.centered_sum_update!(m1, a, l[:, 1])
+    Moments.centered_sum_update!(m1, a, l[:, 1])
+    Moments.centered_sum_update!(m2, a, l)
     Moments.centered_sum_update!(m2, a, l)
 
     @test all(isapprox.(m1.moments, m2.moments[1, :, :, :]))

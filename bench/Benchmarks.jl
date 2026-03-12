@@ -72,9 +72,11 @@ function bench_Moments_NDLabel(TArray::Type = Array)
     l = TArray(rand(UInt8, 100000, 16))
     m1 = Moments.UniVarMomentsAcc{Float32, UInt8, Array}(10, 1000, 256)
     m2 = Moments.UniVarMomentsAccNDLabel{Float32, UInt8, Array, 1}(10, 1000, 256, (4, ))
+    mlist = [Moments.UniVarMomentsAcc{Float32, UInt8, Array}(10, 1000, 256) for _ in 1:4]
 
     bench_suite["Centered Sum Update, scalar label"] = @benchmarkable Moments.centered_sum_update!($m1, $t, $l[:, 1])
     bench_suite["Centered Sum Update, vec 4 label"] = @benchmarkable Moments.centered_sum_update!($m2, $t, $l[:, 1:4])
+    bench_suite["Centered Sum Update, multiple scalar label"] = @benchmarkable Moments.centered_sum_update!.($mlist, $[view(t, :, :) for _ in 1:4], $[l[:, i] for i in 1:4])
 
     println("Tuning benchmark parameters")
     tune!(bench_suite)
