@@ -59,8 +59,12 @@ function bench_Moments_centered_sum_update(TArray::Type = Array)
     t = TArray(rand(Float32, 500000, 1000))
     l = TArray(rand(UInt8, 500000))
     m1 = Moments.UniVarMomentsAcc{Float32, UInt8, Array}(10, 1000, 256)
-
+    m2 = Moments.UniVarMomentsAcc{Float32, UInt8, Array}(10, 1000, 256)
+    
+    Moments.centered_sum_update!(m1, t, l)
+    Moments.centered_sum_update2!(m2, t, l)
     bench_suite["Centered Sum Update"] = @benchmarkable Moments.centered_sum_update!($m1, $t, $l)
+    bench_suite["Centered Sum Update 2"] = @benchmarkable Moments.centered_sum_update2!($m2, $t, $l)
 
     println("Tuning benchmark parameters")
     tune!(bench_suite)
