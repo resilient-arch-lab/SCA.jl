@@ -265,9 +265,8 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
     merge_from!(acc, Tarray(moments), Tarray(totals))
 end
 
-# works
 function centered_sum_update2!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    # Initialize intermediate values
+    # initialize intermediate values
     sums = fill!(similar(traces, Tt, acc.nl, acc.ns), 0)
     moments = fill!(similar(traces, Tt, size(acc.moments)), 0)
     totals = fill!(similar(traces, UInt32, size(acc.totals)), 0)
@@ -281,8 +280,8 @@ function centered_sum_update2!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Ab
     centered_sum_kern_ak!(moments, traces, labels)
 
     # merge centered sum estimations
-    Threads.@threads for l in axes(moments, 1)
-        merge_from_kern!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
+    for l in axes(moments, 1)
+        merge_from_ak!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
     end
 end
 
@@ -319,6 +318,7 @@ end
 # Precision (even with Float64) seems to degrade from performing the same 
 # computation in a single centered_sum_update! for the same data. Use of 
 # this should be minimized, prefer larger update batches whenever possible
+# TODO: depricate in favor of merge_from_kern!
 function merge_from!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, M_new::Array{Tt, 3}, totals_new::Array{UInt32, 1}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     if all(totals_new .== 0)
         return nothing
@@ -338,7 +338,7 @@ function merge_from!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, M_new::Array{Tt, 3},
 
     # I'm pretty sure this can't be threaded like this, because the loop modifies δ_pows
     # Threads.@threads for l_idx in axes(totals_old, 2)
-    for l_idx in axes(totals_old, 2)
+    for l_idx in axes(totals_old, 1)
         M_old_i = view(M_old, l_idx, :, :)
         M_new_i = view(M_new, l_idx, :, :)
 
@@ -406,7 +406,7 @@ function merge_from!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, 1}, M_new::Arr
         totals_new_l = view(totals_new, l, :)
         totals_result_l = totals_old_l .+ totals_new_l
 
-        Threads.@threads for l_idx in axes(totals_old_l, 2)
+        for l_idx in axes(totals_old_l, 1)
             M_old_i = view(M_old_l, l_idx, :, :)
             M_new_i = view(M_new, l, l_idx, :, :)
 
@@ -447,71 +447,7 @@ function merge_from!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, 1}, M_new::Arr
     return nothing
 end
 
-# This is gonna be pretty tricky to parallelize, but the CPU versions are slow and allocate a ton.
-# I could make a kernel to merge a single label, and they can be dispatched in parallel. 
-function merge_from_ak!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, M_new::Array{Tt, 3}, totals_new::Array{UInt32, 1}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    if all(totals_new .== 0)
-        return nothing
-    end
-    if all(acc.totals .== 0)
-        # If this is the first estimation, the acc values can be updated directly
-        acc.moments .= M_new
-        acc.totals .= totals_new
-        return nothing
-    end
-
-    δ = view(M_new, :, 1, :) - view(acc.moments, :, 1, :)
-    δ_pows = fill!(Tarray{Tt, 2}(undef, acc.order+1, acc.ns), 0)
-    M_old, totals_old = view(acc.moments, :, :, :), view(acc.totals, :)
-    totals_result = acc.totals .+ totals_new
-    kern_order = Int(acc.order)
-
-    for l_idx in axes(totals_old, 1)
-        M_old_i = view(M_old, l_idx, :, :)
-        M_new_i = view(M_new, l_idx, :, :)
-
-        if totals_new[l_idx] == 0
-            continue
-        end
-        if totals_old[l_idx] == 0
-            M_old_i .= M_new_i
-            totals_old[l_idx] = totals_new[l_idx]
-            continue
-        end
-
-        @inbounds AK.foraxes(δ_pows, 1) do i
-            for j in axes(δ_pows, 2)
-                δ_pow_update = δ[l_idx, j]^j
-                δ_pows[i, j] = δ_pow_update
-            end
-        end
-        
-        for p in kern_order:-1:2
-            (as_input1, to_update1) = view(M_old_i, 1:p-1, :), view(M_old_i, p, :)
-            (as_input2, to_update2) = view(M_new_i, 1:p-1, :), view(M_new_i, p, :)
-
-            to_update1 .+= to_update2
-
-            for k in 1:p-2
-                δ_pows_k = δ_pows[k, :]
-                cst = binomial(k, p)
-                tmp2 = view(as_input1, p-k, :) .* ((-totals_new[l_idx]/totals_result[l_idx]).^k)
-                tmp3 = view(as_input2, p-k, :) .* ((totals_old[l_idx]/totals_result[l_idx]).^k)
-                x = tmp2 .+ tmp3
-                to_update1 .+= (δ_pows_k .* cst) .* x
-            end
-            tmp = (1/(totals_new[l_idx]^(p-1))) - ((-1/totals_old[l_idx])^(p-1))
-            tmp *= ((totals_old[l_idx] * totals_new[l_idx])/totals_result[l_idx])^p
-
-            to_update1 .+= δ_pows[p, :] .* tmp
-        end
-        view(M_old_i, 1, :) .+= (view(δ, l_idx, :) .* (totals_new[l_idx]/totals_result[l_idx]))  # update mean seperately
-    end
-    totals_old .= totals_result
-    return nothing
-end
-
-# Merge a single label 
+# Merge a single label estimation
 function merge_from_kern!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UInt32, 0}, M_new::AbstractArray{Tt, 2}, total_new::AbstractArray{UInt32, 0}) where { Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray }
     checkbounds(M_new, size(M_old)...)
     checkbounds(total_new, size(total_old)...)
@@ -531,6 +467,7 @@ function merge_from_kern!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{
     δ = M_new[1, :] .- M_old[1, :]
     δ_pows = zeros(Tt, order + 1, size(M_old, 2))
     total_result = total_old .+ total_new
+    (tmp1, tmp2, tmp3) = (zeros(Tt, size(M_old, 2)) for _ in 1:3)
     @inbounds begin
         for j in axes(δ_pows, 1)
             δ_pows[j, :] .= δ.^j
@@ -543,22 +480,136 @@ function merge_from_kern!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{
             to_update1 .+= to_update2
 
             for k in 1:p-2
-                δ_pows_k = δ_pows[k, :]
                 cst = binomial(k, p)
-                tmp2 = view(as_input1, p-k, :) .* ((-total_new[1]/total_result[1])^k)
-                tmp3 = view(as_input2, p-k, :) .* ((total_old[1]/total_result[1])^k)
-                x = tmp2 .+ tmp3
-                to_update1 .+= (δ_pows_k .* cst) .* x
+                tmp1 .= as_input1[p-k, :] .* ((-total_new[1]/total_result[1])^k)
+                tmp2 .= as_input2[p-k, :] .* ((total_old[1]/total_result[1])^k)
+                tmp3 .= tmp1 .+ tmp2
+                to_update1 .+= (δ_pows[k, :] .* cst) .* tmp3
+            end
+            tmp1[1] = (1/(total_new[1]^(p-1))) - ((-1/total_old[1])^(p-1))
+            tmp1[1] *= ((total_old[1] * total_new[1])/total_result[1])^p
+
+            to_update1 .+= δ_pows[p, :] .* tmp1[1]
+        end
+        view(M_old, 1, :) .+= (δ .* (total_new[1]/total_result[1]))  # update mean seperately
+        total_old[1] = total_result[1]
+    end
+end
+
+# not GPU compatible yet:
+#   - eliminate scalar indexing (somehow? might have to do totals inside AK loop)
+#   - make temp variables in same memory as input array types
+#   - 
+function merge_from_ak!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UInt32, 0}, M_new::AbstractArray{Tt, 2}, total_new::AbstractArray{UInt32, 0}) where { Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray }
+    checkbounds(M_new, size(M_old)...)
+    checkbounds(total_new, size(total_old)...)
+ 
+    if total_new .== 0
+        # println("empty update")
+        return nothing
+    end
+    if total_old .== 0
+        # println("fresh update")
+        M_old .= M_new
+        total_old .= total_new
+        return nothing
+    end
+
+    order = size(M_old, 1)
+    δ = M_new[1, :] .- M_old[1, :]
+    δ_pows = zeros(Tt, order + 1, size(M_old, 2))
+    total_result = total_old .+ total_new
+    (tmp1, tmp2, tmp3) = (zeros(Tt, size(M_old, 2)) for _ in 1:3)
+    @inbounds AK.foraxes(M_old, 2) do i
+        for j in axes(δ_pows, 1)
+            δ_pows[j, i] = δ[i]^j
+        end
+
+        for p in order:-1:2
+            (as_input1, to_update1) = view(M_old, 1:p-1, :), view(M_old, p, :)
+            (as_input2, to_update2) = view(M_new, 1:p-1, :), view(M_new, p, :)
+
+            to_update1[i] += to_update2[i]
+
+            for k in 1:p-2
+                cst = binomial(k, p)
+                tmp1[i] = as_input1[p-k, i] * ((-total_new[1]/total_result[1])^k)
+                tmp2[i] = as_input2[p-k, i] * ((total_old[1]/total_result[1])^k)
+                tmp3[i] = tmp1[i] + tmp2[i]
+                to_update1[i] += (δ_pows[k, i] * cst) * tmp3[i]
             end
             tmp = (1/(total_new[1]^(p-1))) - ((-1/total_old[1])^(p-1))
             tmp *= ((total_old[1] * total_new[1])/total_result[1])^p
 
-            to_update1 .+= δ_pows[p, :] .* tmp
+            to_update1[i] += δ_pows[p, i] * tmp
         end
-        view(M_old, 1, :) .+= (δ .* (total_new[1]/total_result[1]))  # update mean seperately
-
-        total_old[1] = total_result[1]
+        M_old[1, i] += (δ[i] * (total_new[1]/total_result[1]))  # update mean seperately
     end
+    @inbounds total_old .= total_result
+end
+
+function merge_from_ak_gpu!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UInt32, 0}, M_new::AbstractArray{Tt, 2}, total_new::AbstractArray{UInt32, 0}) where { Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray }
+    checkbounds(M_new, size(M_old)...)
+    checkbounds(total_new, size(total_old)...)
+ 
+    # if total_new .== 0
+    #     # println("empty update")
+    #     return nothing
+    # end
+    # if total_old .== 0
+    #     # println("fresh update")
+    #     M_old .= M_new
+    #     total_old .= total_new
+    #     return nothing
+    # end
+
+    order = size(M_old, 1)
+    # δ = M_new[1, :] .- M_old[1, :]
+    # δ_pows = zeros(Tt, order + 1, size(M_old, 2))
+    δ_pows = similar(M_old, order + 1, size(M_old, 2))
+    total_result = total_old .+ total_new
+    # (tmp1, tmp2, tmp3) = (zeros(Tt, size(M_old, 2)) for _ in 1:3)
+    @inbounds AK.foraxes(M_old, 2) do i
+        if total_new[1] == 0
+            
+        elseif total_old[1] == 0
+            for j in axes(M_old, 1)
+                M_old[j, i] = M_new[j, i]
+            end
+            if i == 1
+                total_old[1] = total_result[1]
+            end
+        else
+            δ = M_new[1, i] - M_old[1, i]
+            for j in axes(δ_pows, 1)
+                δ_pows[j, i] = δ^j
+            end
+
+            for p in order:-1:2
+                (as_input1, to_update1) = view(M_old, 1:p-1, :), view(M_old, p, :)
+                (as_input2, to_update2) = view(M_new, 1:p-1, :), view(M_new, p, :)
+
+                to_update1[i] += to_update2[i]
+
+                for k in 1:p-2
+                    cst = binomial(k, p)
+                    tmp1 = as_input1[p-k, i] * ((-total_new[1]/total_result[1])^k)
+                    tmp2 = as_input2[p-k, i] * ((total_old[1]/total_result[1])^k)
+                    tmp3 = tmp1 + tmp2
+                    to_update1[i] += (δ_pows[k, i] * cst) * tmp3
+                end
+                tmp = (1/(total_new[1]^(p-1))) - ((-1/total_old[1])^(p-1))
+                tmp *= ((total_old[1] * total_new[1])/total_result[1])^p
+
+                to_update1[i] += δ_pows[p, i] * tmp
+            end
+            M_old[1, i] += (δ * (total_new[1]/total_result[1]))  # update mean seperately
+            if i == 1
+                total_old[1] = total_result[1]
+            end
+        end
+    end
+    return nothing
 end
 
 function get_mean_and_var(m::UniVarMomentsAcc, d::Int)

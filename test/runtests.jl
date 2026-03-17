@@ -31,14 +31,33 @@ end
     m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
     m2 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
 
-    Moments.centered_sum_update!(m1, a, l)
-    Moments.centered_sum_update2!(m2, a, l)
+    Moments.centered_sum_update!(m1, a[1:5000, :], l[1:5000])
+    Moments.centered_sum_update!(m1, a[5001:end, :], l[5001:end])
+    Moments.centered_sum_update2!(m2, a[1:5000, :], l[1:5000])
+    Moments.centered_sum_update2!(m2, a[5001:end, :], l[5001:end])
 
+    @test all(isapprox.(m1.moments, m2.moments; rtol=1e-2))
     correct = all(isapprox.(m1.moments, m2.moments; rtol=1e-2))
     println("Correct: $correct")
-    prcnt_err = abs.((m2.moments .- m1.moments) ./ m1.moments).*100
 
+    prcnt_err = abs.((m2.moments .- m1.moments) ./ m1.moments).*100
     println("Moment merging algorithm test case percent error per order $(1:m1.order)")
+    display(vec(mean(prcnt_err, dims=(1, 3))))
+end
+
+@testset "UniVarMomentsAccNDLabel tests" begin
+    a = rand(10000, 20)
+    l = rand(UInt8, 10000, 4)
+    m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
+    m2 = Moments.UniVarMomentsAccNDLabel{Float64, UInt8, Array, 1}(10, 20, 256, (4, ))
+
+    Moments.centered_sum_update!(m1, a[1:5000, :], l[1:5000, 1])
+    Moments.centered_sum_update!(m1, a[5001:end, :], l[5001:end, 1])
+    Moments.centered_sum_update!(m2, a[1:5000, :], l[1:5000, :])
+    Moments.centered_sum_update!(m2, a[5001:end, :], l[5001:end, :])
+
+    @test all(isapprox.(m1.moments, m2.moments[1, :, :, :]))
+    prcnt_err = abs.((m1.moments .- m2.moments[1, :, :, :]) ./ m2.moments[1, :, :, :]).*100
     display(vec(mean(prcnt_err, dims=(1, 3))))
 end
 
@@ -74,18 +93,3 @@ end
     @test all(res1 .≈ res2)
 end
 
-@testset "UniVarMomentsAccNDLabel tests" begin
-    a = rand(10000, 20)
-    l = rand(UInt8, 10000, 4)
-    m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
-    m2 = Moments.UniVarMomentsAccNDLabel{Float64, UInt8, Array, 1}(10, 20, 256, (4, ))
-
-    Moments.centered_sum_update!(m1, a, l[:, 1])
-    Moments.centered_sum_update!(m1, a, l[:, 1])
-    Moments.centered_sum_update!(m2, a, l)
-    Moments.centered_sum_update!(m2, a, l)
-
-    @test all(isapprox.(m1.moments, m2.moments[1, :, :, :]))
-    prcnt_err = abs.((m1.moments .- m2.moments[1, :, :, :]) ./ m2.moments[1, :, :, :]).*100
-    display(vec(mean(prcnt_err, dims=(1, 3))))
-end
