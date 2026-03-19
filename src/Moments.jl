@@ -247,7 +247,7 @@ end
 # Note: Tarray must be `Array`, as the struct must live in CPU memory. However, if
 # `traces` and `labels` are GPU arrays, as much computation as possible will be done
 # on GPU before finalizing results on the CPU.
-function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+function centered_sum_update_old!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     # Initialize intermediate values
     sums = fill!(similar(traces, Tt, acc.nl, acc.ns), 0)
     moments = fill!(similar(traces, Tt, size(acc.moments)), 0)
@@ -266,7 +266,7 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
 end
 
 # works end-to-end on CPU or GPU
-function centered_sum_update2!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     # initialize intermediate values
     sums = fill!(similar(traces, Tt, acc.nl, acc.ns), 0)
     moments = fill!(similar(traces, Tt, size(acc.moments)), 0)
@@ -284,8 +284,10 @@ function centered_sum_update2!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Ab
     init_ls = acc.totals .== 0
     update_ls = acc.totals .!= 0
     if !isempty(init_ls)
-        acc.moments[init_ls, :, :] .= moments[init_ls, :, :]
+        acc.moments[init_ls, :, :] .= moments[init_ls, :, :]  # scalar indexing
         acc.totals[init_ls] .= totals[init_ls]
+        # even moving `init_ls` to the same device as `moments` on the second side doesn't make the 
+        # indexing non-scalar. However, if acc is on device memory along with input data this works fine.  
     end
     if !isempty(update_ls)
         for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop

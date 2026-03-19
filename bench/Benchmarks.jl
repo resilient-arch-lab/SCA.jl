@@ -79,8 +79,9 @@ function bench_Moments_centered_sum_update_vs_cpu(TArray::Type = Array)
     
     Moments.centered_sum_update!(m1, t, l)
     Moments.centered_sum_update2!(m2, t, l)
-    bench_suite["Centered Sum Update"] = @benchmarkable Moments.centered_sum_update!($m1, $t, $l)
-    bench_suite["Centered Sum Update 2"] = @benchmarkable Moments.centered_sum_update2!($m2, $t, $l)
+    bench_suite["Centered Sum Update, Array Device"] = @benchmarkable Moments.centered_sum_update!($m1, $t, $l)
+    bench_suite["Centered Sum Update, TArray ($(TArray)) Device"] = @benchmarkable Moments.centered_sum_update!($m2, $t, $l)
+    # bench_suite["Centered Sum Update 2"] = @benchmarkable Moments.centered_sum_update2!($m2, $t, $l)
 
     println("Tuning benchmark parameters")
     tune!(bench_suite)
