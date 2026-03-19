@@ -288,7 +288,7 @@ function centered_sum_update2!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Ab
         acc.totals[init_ls] .= totals[init_ls]
     end
     if !isempty(update_ls)
-        for l in Array(findall(update_ls))  # findall is allowed on GPU, but for some reason the for loop with l is scalar indexing?
+        for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
             merge_from_ak_gpu!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
         end
         acc.totals[update_ls] .+= totals[update_ls]
