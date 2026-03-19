@@ -26,15 +26,15 @@ using Statistics
 end
 
 @testset "Moment merging kernel vs reference function" begin
-    a = rand(10000, 20)
-    l = rand(UInt8, 10000)
-    m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
-    m2 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
+    a = rand(20000, 5)
+    l = rand(UInt8, 20000)
+    m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 5, 256)
+    m2 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 5, 256)
 
-    Moments.centered_sum_update!(m1, a[1:5000, :], l[1:5000])
-    Moments.centered_sum_update!(m1, a[5001:end, :], l[5001:end])
-    Moments.centered_sum_update2!(m2, a[1:5000, :], l[1:5000])
-    Moments.centered_sum_update2!(m2, a[5001:end, :], l[5001:end])
+    Moments.centered_sum_update!(m1, a[1:10000, :], l[1:10000])
+    Moments.centered_sum_update!(m1, a[10001:end, :], l[10001:end])
+    Moments.centered_sum_update2!(m2, a[1:10000, :], l[1:10000])
+    Moments.centered_sum_update2!(m2, a[10001:end, :], l[10001:end])
 
     @test all(isapprox.(m1.moments, m2.moments; rtol=1e-2))
     correct = all(isapprox.(m1.moments, m2.moments; rtol=1e-2))

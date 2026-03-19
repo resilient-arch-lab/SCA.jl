@@ -28,10 +28,10 @@ function Moments.centered_sum_update!(acc::Moments.UniVarMomentsAcc{Tt, Tl, Tarr
     Moments.centered_sum_kern_ak!(moments, traces, labels)
 
     # This has to be performed on CPU for now, its a pretty complicated OP
-    # Moments.merge_from!(acc, Tarray(moments), Tarray(totals))
-    for l in axes(moments, 1)
-        Moments.merge_from_ak!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
-    end
+    Moments.merge_from!(acc, Tarray(moments), Tarray(totals))
+    # for l in axes(moments, 1)
+    #     Moments.merge_from_ak!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
+    # end
 end
 
 

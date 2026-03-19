@@ -265,6 +265,7 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
     merge_from!(acc, Tarray(moments), Tarray(totals))
 end
 
+# works end-to-end on CPU or GPU
 function centered_sum_update2!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     # initialize intermediate values
     sums = fill!(similar(traces, Tt, acc.nl, acc.ns), 0)
@@ -280,8 +281,17 @@ function centered_sum_update2!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Ab
     centered_sum_kern_ak!(moments, traces, labels)
 
     # merge centered sum estimations
-    for l in axes(moments, 1)
-        merge_from_ak!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
+    init_ls = acc.totals .== 0
+    update_ls = acc.totals .!= 0
+    if !isempty(init_ls)
+        acc.moments[init_ls, :, :] .= moments[init_ls, :, :]
+        acc.totals[init_ls] .= totals[init_ls]
+    end
+    if !isempty(update_ls)
+        for l in Array(findall(update_ls))  # findall is allowed on GPU, but for some reason the for loop with l is scalar indexing?
+            merge_from_ak_gpu!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
+        end
+        acc.totals[update_ls] .+= totals[update_ls]
     end
 end
 
@@ -496,10 +506,6 @@ function merge_from_kern!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{
     end
 end
 
-# not GPU compatible yet:
-#   - eliminate scalar indexing (somehow? might have to do totals inside AK loop)
-#   - make temp variables in same memory as input array types
-#   - 
 function merge_from_ak!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UInt32, 0}, M_new::AbstractArray{Tt, 2}, total_new::AbstractArray{UInt32, 0}) where { Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray }
     checkbounds(M_new, size(M_old)...)
     checkbounds(total_new, size(total_old)...)
@@ -551,63 +557,42 @@ end
 function merge_from_ak_gpu!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UInt32, 0}, M_new::AbstractArray{Tt, 2}, total_new::AbstractArray{UInt32, 0}) where { Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray }
     checkbounds(M_new, size(M_old)...)
     checkbounds(total_new, size(total_old)...)
- 
-    # if total_new .== 0
-    #     # println("empty update")
-    #     return nothing
-    # end
-    # if total_old .== 0
-    #     # println("fresh update")
-    #     M_old .= M_new
-    #     total_old .= total_new
-    #     return nothing
-    # end
 
     order = size(M_old, 1)
-    # δ = M_new[1, :] .- M_old[1, :]
-    # δ_pows = zeros(Tt, order + 1, size(M_old, 2))
     δ_pows = similar(M_old, order + 1, size(M_old, 2))
-    total_result = total_old .+ total_new
-    # (tmp1, tmp2, tmp3) = (zeros(Tt, size(M_old, 2)) for _ in 1:3)
+    # LLVM error: Undefined external symbol "__divti3"
+    # missing external symbol for 128bit integer division, probably from `binomial`
+    # fixed by casting `binomial` args to Int32
     @inbounds AK.foraxes(M_old, 2) do i
-        if total_new[1] == 0
-            
-        elseif total_old[1] == 0
-            for j in axes(M_old, 1)
-                M_old[j, i] = M_new[j, i]
-            end
-            if i == 1
-                total_old[1] = total_result[1]
-            end
-        else
-            δ = M_new[1, i] - M_old[1, i]
-            for j in axes(δ_pows, 1)
-                δ_pows[j, i] = δ^j
-            end
-
-            for p in order:-1:2
-                (as_input1, to_update1) = view(M_old, 1:p-1, :), view(M_old, p, :)
-                (as_input2, to_update2) = view(M_new, 1:p-1, :), view(M_new, p, :)
-
-                to_update1[i] += to_update2[i]
-
-                for k in 1:p-2
-                    cst = binomial(k, p)
-                    tmp1 = as_input1[p-k, i] * ((-total_new[1]/total_result[1])^k)
-                    tmp2 = as_input2[p-k, i] * ((total_old[1]/total_result[1])^k)
-                    tmp3 = tmp1 + tmp2
-                    to_update1[i] += (δ_pows[k, i] * cst) * tmp3
-                end
-                tmp = (1/(total_new[1]^(p-1))) - ((-1/total_old[1])^(p-1))
-                tmp *= ((total_old[1] * total_new[1])/total_result[1])^p
-
-                to_update1[i] += δ_pows[p, i] * tmp
-            end
-            M_old[1, i] += (δ * (total_new[1]/total_result[1]))  # update mean seperately
-            if i == 1
-                total_old[1] = total_result[1]
-            end
+        # This conditional is only here because scalar indexing is disallowed on GPU, and
+        # since this function acts on a scalar label and total I have to do it within the
+        # kernel. Of couse, I could check for zero'd totals_old/new for all labels outside
+        # this operation and only call the appropriate kernels.
+        δ = M_new[1, i] - M_old[1, i]
+        total_result = total_old[1] + total_new[1]
+        for j in axes(δ_pows, 1)
+            δ_pows[j, i] = δ^j
         end
+
+        for p in order:-1:2
+            (as_input1, to_update1) = view(M_old, 1:p-1, :), view(M_old, p, :)
+            (as_input2, to_update2) = view(M_new, 1:p-1, :), view(M_new, p, :)
+
+            to_update1[i] += to_update2[i]
+
+            for k in 1:p-2
+                cst = binomial(Int32(k), Int32(p))  # explicity Int32 cast avoids unnecessary use of arbitrary precision arithmetic 
+                tmp1 = as_input1[p-k, i] * ((-total_new[1]/total_result[1])^k)
+                tmp2 = as_input2[p-k, i] * ((total_old[1]/total_result[1])^k)
+                tmp3 = tmp1 + tmp2
+                to_update1[i] += (δ_pows[k, i] * cst) * tmp3
+            end
+            tmp = (1/(total_new[1]^(p-1))) - ((-1/total_old[1])^(p-1))
+            tmp *= ((total_old[1] * total_new[1])/total_result[1])^p
+
+            to_update1[i] += δ_pows[p, i] * tmp
+        end
+        M_old[1, i] += (δ * (total_new[1]/total_result[1]))  # update mean seperately
     end
     return nothing
 end
