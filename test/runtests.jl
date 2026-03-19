@@ -5,6 +5,26 @@ using Statistics
 # Test precision / stability of centered sum merging formula [Prop. 2.1, 10.2172/1028931]
 # with reference to a single centered sum calculation on the same data, requiring no merge
 # operation. Initial results are inconsistent even with a relative tolarance of 1. 
+@testset "Moment merging precision comparison (Legacy reference function)" begin
+    a = rand(10000, 20)
+    l = rand(UInt8, 10000)
+    m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
+    m2 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
+
+    a_tiles, l_tiles = Utils.tiled_view(a, (5000, 20)), Utils.tiled_view(l, (5000, ))
+
+    Moments.centered_sum_update_old!(m1, a, l)
+    for (a_tile, l_tile) in zip(a_tiles, l_tiles)
+        Moments.centered_sum_update_old!(m2, a_tile, l_tile)
+    end
+
+    correct = all(isapprox.(m1.moments, m2.moments; rtol=1e-2))
+    prcnt_err = abs.((m2.moments .- m1.moments) ./ m1.moments).*100
+
+    println("Moment merging algorithm test case percent error per order $(1:m1.order)")
+    display(vec(mean(prcnt_err, dims=(1, 3))))
+end
+
 @testset "Moment merging precision comparison" begin
     a = rand(10000, 20)
     l = rand(UInt8, 10000)
@@ -25,16 +45,16 @@ using Statistics
     display(vec(mean(prcnt_err, dims=(1, 3))))
 end
 
-@testset "Moment merging kernel vs reference function" begin
+@testset "Moment merging kernel comparison to legacy reference function" begin
     a = rand(20000, 5)
     l = rand(UInt8, 20000)
     m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 5, 256)
     m2 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 5, 256)
 
-    Moments.centered_sum_update!(m1, a[1:10000, :], l[1:10000])
-    Moments.centered_sum_update!(m1, a[10001:end, :], l[10001:end])
-    Moments.centered_sum_update2!(m2, a[1:10000, :], l[1:10000])
-    Moments.centered_sum_update2!(m2, a[10001:end, :], l[10001:end])
+    Moments.centered_sum_update_old!(m1, a[1:10000, :], l[1:10000])
+    Moments.centered_sum_update_old!(m1, a[10001:end, :], l[10001:end])
+    Moments.centered_sum_update!(m2, a[1:10000, :], l[1:10000])
+    Moments.centered_sum_update!(m2, a[10001:end, :], l[10001:end])
 
     @test all(isapprox.(m1.moments, m2.moments; rtol=1e-2))
     correct = all(isapprox.(m1.moments, m2.moments; rtol=1e-2))

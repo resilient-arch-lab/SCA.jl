@@ -72,7 +72,7 @@ end
 
 # Works on CPU and GPU
 function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
-    @inbounds AK.foraxes(traces, 1) do i
+    @inbounds AK.foraxes(traces, 1, min_elems=5000) do i
         l_i = convert(Int32, labels[i]+1)
         Atomix.@atomic totals[l_i] += 1
         for j in axes(traces, 2)
@@ -82,7 +82,7 @@ function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractVector{T
 end
 
 function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
-    @inbounds AK.foraxes(traces, 1) do i
+    @inbounds AK.foraxes(traces, 1, min_elems=5000) do i
         for l in axes(labels, 2)
             l_i = convert(Int32, labels[i, l]+1)
             Atomix.@atomic totals[l, l_i] += 1
@@ -144,7 +144,7 @@ end
 function centered_sum_kern_ak!(moments::AbstractArray{Tt, 3}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     order = size(moments, 2)
 
-    @inbounds AK.foraxes(traces, 1) do i
+    @inbounds AK.foraxes(traces, 1, min_elems=5000) do i
         l_i = convert(Int32, labels[i]+1)
         for j in axes(traces, 2)
             t_update = traces[i, j] - moments[l_i, 1, j]
@@ -160,7 +160,7 @@ end
 function centered_sum_kern_ak!(moments::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     order = size(moments, 3)
 
-    @inbounds AK.foraxes(traces, 1) do i
+    @inbounds AK.foraxes(traces, 1, min_elems=5000) do i
         for l in axes(labels, 2)
             l_i = convert(Int32, labels[i, l]+1)
             for j in axes(traces, 2)
@@ -283,13 +283,15 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
     # merge centered sum estimations
     init_ls = acc.totals .== 0
     update_ls = acc.totals .!= 0
-    if !isempty(init_ls)
+    moments = Tarray(moments)  # cast to same memory as acc if not already there
+    totals = Tarray(totals)  # cast to same memory as acc if not already there
+    if any(init_ls)
         acc.moments[init_ls, :, :] .= moments[init_ls, :, :]  # scalar indexing
         acc.totals[init_ls] .= totals[init_ls]
         # even moving `init_ls` to the same device as `moments` on the second side doesn't make the 
         # indexing non-scalar. However, if acc is on device memory along with input data this works fine.  
     end
-    if !isempty(update_ls)
+    if any(update_ls)
         for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
             merge_from_ak_gpu!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
         end
@@ -460,7 +462,7 @@ function merge_from!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, 1}, M_new::Arr
 end
 
 # Merge a single label estimation
-function merge_from_kern!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UInt32, 0}, M_new::AbstractArray{Tt, 2}, total_new::AbstractArray{UInt32, 0}) where { Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray }
+function merge_from_kern!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UInt32, 0}, M_new::AbstractArray{Tt, 2}, total_new::AbstractArray{UInt32, 0}) where { Tt<:AbstractFloat }
     checkbounds(M_new, size(M_old)...)
     checkbounds(total_new, size(total_old)...)
 
@@ -508,7 +510,7 @@ function merge_from_kern!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{
     end
 end
 
-function merge_from_ak!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UInt32, 0}, M_new::AbstractArray{Tt, 2}, total_new::AbstractArray{UInt32, 0}) where { Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray }
+function merge_from_ak!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UInt32, 0}, M_new::AbstractArray{Tt, 2}, total_new::AbstractArray{UInt32, 0}) where { Tt<:AbstractFloat }
     checkbounds(M_new, size(M_old)...)
     checkbounds(total_new, size(total_old)...)
  
@@ -528,7 +530,7 @@ function merge_from_ak!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UI
     δ_pows = zeros(Tt, order + 1, size(M_old, 2))
     total_result = total_old .+ total_new
     (tmp1, tmp2, tmp3) = (zeros(Tt, size(M_old, 2)) for _ in 1:3)
-    @inbounds AK.foraxes(M_old, 2) do i
+    @inbounds AK.foraxes(M_old, 2, min_elems=1000) do i
         for j in axes(δ_pows, 1)
             δ_pows[j, i] = δ[i]^j
         end
@@ -556,7 +558,7 @@ function merge_from_ak!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UI
     @inbounds total_old .= total_result
 end
 
-function merge_from_ak_gpu!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UInt32, 0}, M_new::AbstractArray{Tt, 2}, total_new::AbstractArray{UInt32, 0}) where { Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray }
+function merge_from_ak_gpu!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UInt32, 0}, M_new::AbstractArray{Tt, 2}, total_new::AbstractArray{UInt32, 0}) where { Tt<:AbstractFloat }
     checkbounds(M_new, size(M_old)...)
     checkbounds(total_new, size(total_old)...)
 
@@ -565,11 +567,7 @@ function merge_from_ak_gpu!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArra
     # LLVM error: Undefined external symbol "__divti3"
     # missing external symbol for 128bit integer division, probably from `binomial`
     # fixed by casting `binomial` args to Int32
-    @inbounds AK.foraxes(M_old, 2) do i
-        # This conditional is only here because scalar indexing is disallowed on GPU, and
-        # since this function acts on a scalar label and total I have to do it within the
-        # kernel. Of couse, I could check for zero'd totals_old/new for all labels outside
-        # this operation and only call the appropriate kernels.
+    @inbounds AK.foraxes(M_old, 2, min_elems=1000) do i
         δ = M_new[1, i] - M_old[1, i]
         total_result = total_old[1] + total_new[1]
         for j in axes(δ_pows, 1)
