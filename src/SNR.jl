@@ -38,6 +38,17 @@ mutable struct SNRMoments{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     end
 end
 
+mutable struct SNRMomentsNDLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
+    moments::Moments.UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}
+    nl::Int
+    ns::Int
+
+    function SNRMomentsNDLabel{Tt, Tl, Tarray, LD}(ns::Int, nl::Int, label_shape) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
+        moments = Moments.UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}(2, ns, nl, label_shape)
+        new{Tt, Tl, Tarray, LD}(moments, nl, ns)
+    end
+end
+
 mutable struct SNRMomentsChunked{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     chunksize::NTuple{2, Int}  # chunks may not be of exactly `chunksize` dim
     chunk_map::Dict{UnitRange, SNRMoments{Tt, Tl, Tarray}}
@@ -61,7 +72,7 @@ mutable struct SNROrdered{Tt<:AbstractFloat, Tl<:Integer}
     end
 end
 
-function SNR_fit!(snr::SNRBasic{Tt, Tl}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl})
+function SNR_fit!(snr::SNRBasic{Tt, Tl}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:Real, Tl<:Real}
     samples_per_thread = cld(size(traces, 2), Threads.nthreads())
     trace_tiles = tiled_view(traces, (size(traces, 1), samples_per_thread))
     sum_tiles = tiled_view(snr.sums, (size(traces, 1), samples_per_thread))
@@ -83,16 +94,16 @@ function SNR_fit!(snr::SNRBasic{Tt, Tl}, traces::AbstractMatrix{Tt}, labels::Abs
     end
 end
 
-function SNR_fit!(snr::Union{SNRMoments{Tt, Tl}, SNROrdered{Tt, Tl}}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl})
+function SNR_fit!(snr::Union{SNRMoments{Tt, Tl}, SNROrdered{Tt, Tl}}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:Real, Tl<:Real}
     centered_sum_update!(snr.moments, traces, labels)
 end
 
-function SNR_fit!(snr::SNRMomentsChunked{Tt, Tl}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl})
+function SNR_fit!(snr::SNRMomentsChunked{Tt, Tl}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:Real, Tl<:Real}
     (trace_tiles, tile_indices) = tiled_view(traces, snr.chunksize; return_indices=true)
     label_tiles = tiled_view(labels, (snr.chunksize[1], ))
 
     for batch in axes(trace_tiles, 1)
-        Threads.@threads for tile in axes(trace_tiles, 2)
+        for tile in axes(trace_tiles, 2)
             SNR_fit!(snr.chunk_map[tile_indices[batch, tile][2]], trace_tiles[batch, tile], label_tiles[batch])
         end
     end
@@ -109,7 +120,7 @@ function SNR_finalize(snr::SNRBasic{Tt, Tl})::Vector where {Tt<:Real, Tl<:Real}
 end
 
 function SNR_finalize(snr::SNRMoments{Tt, Tl})::Vector where {Tt<:Real, Tl<:Integer}
-    means = @views snr.moments.moments[:, 1, :]
+    means = snr.moments.moments[:, 1, :]
     signals = var(means, dims=1)
     
     vars = (snr.moments.moments[:, 2, :] ./ snr.moments.totals)
