@@ -314,18 +314,21 @@ function centered_sum_update!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}, 
 
     # compute centered sums
     @time "centered_sum_kern_ak!" centered_sum_kern_ak!(moments, traces, labels)  # 15s
-    # @time "centered_sum_kern_ak! (scalar label loop)" for i in axes(moments, 1)  # 18s???
-    #     centered_sum_kern_ak!(view(moments, i, :, :, :), traces, view(labels, :, i))
-    # end
 
-    # This has to be performed on CPU for now, its a pretty complicated OP
-    # @time "merge_from!" merge_from!(acc, Tarray(moments), Tarray(totals))
-    @time "merge_from!" begin
-        for l_idx in axes(moments, 1)
-            for l in axes(moments, 2)
-                merge_from_kern!(view(acc.moments, l_idx, l, :, :), view(acc.totals, l_idx, l), view(moments, l_idx, l, :, :), view(totals, l_idx, l))
-            end
+    # merge centered sum estimations
+    init_ls = acc.totals .== 0
+    update_ls = acc.totals .!= 0
+    moments = Tarray(moments)  # cast to same memory as acc if not already there
+    totals = Tarray(totals)  # cast to same memory as acc if not already there
+    if any(init_ls)
+        acc.moments[init_ls, :, :] .= moments[init_ls, :, :]  # scalar indexing
+        acc.totals[init_ls] .= totals[init_ls]
+    end
+    if any(update_ls)
+        for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
+            merge_from_ak_gpu!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
         end
+        acc.totals[update_ls] .+= totals[update_ls]
     end
 end
 

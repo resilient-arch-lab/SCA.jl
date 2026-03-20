@@ -71,22 +71,31 @@ end
     m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
     m2 = Moments.UniVarMomentsAccNDLabel{Float64, UInt8, Array, 1}(10, 20, 256, (4, ))
 
+    # initialization update
     Moments.centered_sum_update!(m1, a[1:5000, :], l[1:5000, 1])
-    Moments.centered_sum_update!(m1, a[5001:end, :], l[5001:end, 1])
     Moments.centered_sum_update!(m2, a[1:5000, :], l[1:5000, :])
-    Moments.centered_sum_update!(m2, a[5001:end, :], l[5001:end, :])
-
     @test all(isapprox.(m1.moments, m2.moments[1, :, :, :]))
+    println("Update 1 percent error by order:")
     prcnt_err = abs.((m1.moments .- m2.moments[1, :, :, :]) ./ m2.moments[1, :, :, :]).*100
     display(vec(mean(prcnt_err, dims=(1, 3))))
+
+
+    # merge update
+    Moments.centered_sum_update!(m1, a[5001:end, :], l[5001:end, 1])
+    Moments.centered_sum_update!(m2, a[5001:end, :], l[5001:end, :])
+    @test all(isapprox.(m1.moments, m2.moments[1, :, :, :]))
+    println("Update 2 percent error by order:")
+    prcnt_err = abs.((m1.moments .- m2.moments[1, :, :, :]) ./ m2.moments[1, :, :, :]).*100
+    display(vec(mean(prcnt_err, dims=(1, 3))))
+
 end
 
 @testset "Test SNR chunked implementation" begin
     t = rand(Float64, 2000, 1000)
     l = rand(UInt8, 2000)
 
-    snr1 = SNR.SNRMoments{Float64, UInt8}(1000, 256)
-    snr2 = SNR.SNRMomentsChunked{Float64, UInt8}(1000, 256, (2000, 200))
+    snr1 = SNR.SNRMoments{Float64, UInt8, Array}(1000, 256)
+    snr2 = SNR.SNRMomentsChunked{Float64, UInt8, Array}(1000, 256, (2000, 200))
 
     SNR.SNR_fit!(snr1, t, l)
     SNR.SNR_fit!(snr2, t, l)
