@@ -173,20 +173,6 @@ function centered_sum_kern_ak!(moments::AbstractArray{Tt, 4}, traces::AbstractMa
             end
         end
     end
-
-    # @inbounds AK.foraxes(traces, 1) do i
-    #     l_i = convert.(Int32, labels[i, :].+1)
-    #     for j in axes(traces, 2)
-    #         for l in axes(l_i, 1)
-    #             t_update = traces[i, j] - moments[l, l_i[l], 1, j]
-    #             pow = t_update
-    #             for d in 2:order
-    #                 pow *= t_update
-    #                 Atomix.@atomic moments[l, l_i[l], d, j] += pow
-    #             end
-    #         end
-    #     end
-    # end
 end
 
 function centered_sum_cpu!(moments::AbstractArray{Tt, 3}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
@@ -313,13 +299,10 @@ function centered_sum_update!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}, 
     @time "means" @. moments[:, :, 1, :] = sums / totals
 
     # compute centered sums
-    # @time "centered_sum_kern_ak!" centered_sum_kern_ak!(moments, traces, labels)  # 15s
-    @time "centered_sum_kern_ak!" @sync for l in CartesianIndices(acc.label_shape)
-        @async begin
-            centered_sum_kern_ak!(view(acc.moments, l, :, :, :), traces, labels[:, l])
-        end
+    # @time "centered_sum_kern_ak!" centered_sum_kern_ak!(moments2, traces, labels)  # 15s
+    @time "centered_sum_kern_ak!" @sync for l in axes(labels, 2)
+        Threads.@spawn centered_sum_kern_ak!(view(moments, l, :, :, :), traces, labels[:, l])
     end
-    
 
     # merge centered sum estimations
     init_ls = acc.totals .== 0
@@ -327,12 +310,12 @@ function centered_sum_update!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}, 
     moments = Tarray(moments)  # cast to same memory as acc if not already there
     totals = Tarray(totals)  # cast to same memory as acc if not already there
     if any(init_ls)
-        acc.moments[init_ls, :, :] .= moments[init_ls, :, :]  # scalar indexing
+        acc.moments[init_ls, :, :] .= moments[init_ls, :, :]
         acc.totals[init_ls] .= totals[init_ls]
     end
     if any(update_ls)
-        for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
-            merge_from_ak_gpu!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
+        @sync for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
+            Threads.@spawn merge_from_ak_gpu!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
         end
         acc.totals[update_ls] .+= totals[update_ls]
     end
