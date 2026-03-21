@@ -50,7 +50,7 @@ mutable struct SNRMomentsNDLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:Abstrac
 end
 
 mutable struct SNRMomentsChunked{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    chunksize::NTuple{2, Int}  # chunks may not be of exactly `chunksize` dim
+    chunksize::NTuple{2, Int}  # chunks might not be of exactly `chunksize` dim
     chunk_map::Dict{UnitRange, SNRMoments{Tt, Tl, Tarray}}
     nl::Int
     ns::Int
@@ -131,8 +131,8 @@ end
 
 function SNR_finalize(snr::SNRMomentsChunked{Tt, Tl})::Vector where {Tt<:Real, Tl<:Integer}
     out = zeros(snr.ns)
-    Threads.@threads for slice in collect(keys(snr.chunk_map))
-        out[slice] .= SNR_finalize(snr.chunk_map[slice])
+    @sync for slice in collect(keys(snr.chunk_map))
+        @async out[slice] .= SNR_finalize(snr.chunk_map[slice])
     end
     out
 end

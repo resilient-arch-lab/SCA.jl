@@ -10,8 +10,7 @@ using Statistics
 using MultivariateStats
 using Distributions
 
-# Classic Gaussian Template Attack stuff
-
+# Classic Gaussian Template Attack
 mutable struct GaussianLabelTemplate{Tt<:Real, Tl<:Integer}
     label::Tl  # Template label
     d::MvNormal{Tt}  # Multivariate normal distribution, fit to data with label

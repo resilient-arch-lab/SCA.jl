@@ -120,4 +120,11 @@ function test_NDLabel_moments()
     # prcnt_err
 end
 
-test_NDLabel_moments()
+function test_GPU_Template_Attack(TArray::Type = Array)
+    t = TArray(rand(20000, 20))
+    l = TArray(rand(UInt8, 20000, 4))
+    PCA_dims = 3
+
+    model_d0 = Attack.PCAGaussianModel{Float64, UInt8}(256, size(t, 2), PCA_dims)
+    Attack.fit_model(model_d0, t, l[:, 1])
+end
