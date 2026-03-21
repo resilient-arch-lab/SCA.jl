@@ -49,7 +49,7 @@ end
 
 # works on CPU and GPU
 # Depricated in favor of AcceleratedKernels kernels (label_wise_sum_ak!)
-@kernel function label_wise_sum_shared!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
+@kernel function label_wise_sum_shared!(@Const(traces::AbstractMatrix{Tt}), @Const(labels::AbstractVector{Tl}), sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     I, J = @index(Global, NTuple)  # I: trace, J: y_offset
     i, j = @index(Local, NTuple)
 
@@ -313,7 +313,13 @@ function centered_sum_update!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}, 
     @time "means" @. moments[:, :, 1, :] = sums / totals
 
     # compute centered sums
-    @time "centered_sum_kern_ak!" centered_sum_kern_ak!(moments, traces, labels)  # 15s
+    # @time "centered_sum_kern_ak!" centered_sum_kern_ak!(moments, traces, labels)  # 15s
+    @time "centered_sum_kern_ak!" @sync for l in CartesianIndices(acc.label_shape)
+        @async begin
+            centered_sum_kern_ak!(view(acc.moments, l, :, :, :), traces, labels[:, l])
+        end
+    end
+    
 
     # merge centered sum estimations
     init_ls = acc.totals .== 0
