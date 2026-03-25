@@ -90,6 +90,25 @@ function bench_Moments_centered_sum_update_vs_cpu(TArray::Type = Array)
     run(bench_suite, verbose = true, seconds = 5)
 end
 
+function bench_Moments_centered_sum_update_vs_combined(TArray::Type = Array)
+    t = TArray(rand(Float32, 300000, 1000))
+    l = TArray(rand(UInt8, 300000))
+    m1 = Moments.UniVarMomentsAcc{Float32, UInt8, Array}(10, 1000, 256)
+    m2 = Moments.UniVarMomentsAcc{Float32, UInt8, Array}(10, 1000, 256)
+    
+    Moments.centered_sum_update_combined!(m2, t, l)
+    Moments.centered_sum_update!(m1, t, l)
+    Moments.centered_sum_update_combined!(m2, t, l)
+    Moments.centered_sum_update!(m1, t, l)
+    bench_suite["Combined Centered Sum Update"] = @benchmarkable Moments.centered_sum_update!($m2, $t, $l)
+    bench_suite["Centered Sum Update"] = @benchmarkable Moments.centered_sum_update!($m1, $t, $l)
+    # bench_suite["Centered Sum Update 2"] = @benchmarkable Moments.centered_sum_update2!($m2, $t, $l)
+
+    println("Tuning benchmark parameters")
+    tune!(bench_suite)
+    run(bench_suite, verbose = true, seconds = 5)
+end
+
 function bench_Moments_NDLabel(TArray::Type = Array)
     t = TArray(rand(Float32, 100000, 1000))
     l = TArray(rand(UInt8, 100000, 16))

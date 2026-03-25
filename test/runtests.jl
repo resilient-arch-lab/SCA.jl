@@ -122,3 +122,18 @@ end
     @test all(res1 .≈ res2)
 end
 
+@testset "centered_sum_update_combined" begin
+    a1 = rand(10000, 20)
+    a2 = rand(10000, 20)
+    l1 = rand(UInt8, 10000)
+    l2 = rand(UInt8, 10000)
+    m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
+    m2 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
+
+    Moments.centered_sum_update_combined!(m1, a1, l1)
+    Moments.centered_sum_update_combined!(m1, a2, l2)
+    Moments.centered_sum_update!(m2, a1, l1)
+    Moments.centered_sum_update!(m2, a2, l2)
+
+    @test all(isapprox.(m1.moments, m2.moments))
+end
