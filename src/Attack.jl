@@ -9,6 +9,7 @@ using .Moments
 using Statistics 
 using MultivariateStats
 using Distributions
+using Adapt
 
 # Classic Gaussian Template Attack
 mutable struct GaussianLabelTemplate{Tt<:Real, Tl<:Integer}
@@ -62,21 +63,21 @@ function apply_model(model::GaussianModel{Tt, Tl}, traces::AbstractMatrix{Tt})::
 end
 
 # Gaussian model in PCA subspace
-mutable struct PCAGaussianModel{Tt<:Real, Tl<:Integer}
+mutable struct PCAGaussianModel{Tt<:Real, Tl<:Integer, Ta<:AbstractArray}
     gaussian_model::GaussianModel{Tt, Tl}
     labels::UnitRange{Tl}
-    moments::UniVarMomentsAcc{Tt, Tl, Array}
+    moments::UniVarMomentsAcc{Tt, Tl, Ta}
     n_PCA_dims::Int
     PCA::Union{PCA, Nothing}
 
-    function PCAGaussianModel{Tt, Tl}(nl::Int, ns::Int, n_PCA_dims::Int=3) where {Tt<:Real, Tl<:Integer}
+    function PCAGaussianModel{Tt, Tl, Ta}(nl::Int, ns::Int, n_PCA_dims::Int=3) where {Tt<:Real, Tl<:Integer, Ta<:AbstractArray}
         gaussian_model = GaussianModel{Tt, Tl}(nl)
-        m = UniVarMomentsAcc{Tt, Tl, Array}(2, ns, nl)
+        m = UniVarMomentsAcc{Tt, Tl, Ta}(2, ns, nl)
         new(gaussian_model, gaussian_model.labels, m, n_PCA_dims, nothing)
     end
 end
 
-function fit_model(model::PCAGaussianModel{Tt, Tl}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:Real, Tl<:Integer}
+function fit_model(model::PCAGaussianModel, traces::AbstractMatrix, labels::AbstractVector)
     centered_sum_update!(model.moments, traces, labels)
     means = model.moments.moments[:, 1, :]
     model.PCA = fit(PCA, means', maxoutdim=model.n_PCA_dims)
