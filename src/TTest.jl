@@ -38,14 +38,9 @@ function ttest_fit!(ttest::TTestChunked{Tt, Tl}, traces, labels) where {Tt<:Abst
     (trace_tiles, tile_indices) = tiled_view(traces, ttest.chunksize; return_indices=true)
     label_tiles = tiled_view(labels, (ttest.chunksize[1], ))
 
-    # for (t_tile, l_tile, tile_idx) in zip(trace_tiles, repeat(label_tiles, outer=(1, size(trace_tiles, 2))), tile_indices)
-    #     # NOTE: tiles which don't overlap on dimension 2 can be processed concurrently. 
-    #     ttest_fit!(ttest.chunk_map[tile_idx[2]], t_tile, l_tile)
-    # end
-
-    for batch in axes(trace_tiles, 1)
-        @sync for tile in axes(trace_tiles, 2)
-            @async ttest_fit!(ttest.chunk_map[tile_indices[batch, tile][2]], trace_tiles[batch, tile], label_tiles[batch])
+    Threads.@threads for tile in axes(trace_tiles, 2)
+        for batch in axes(trace_tiles, 1)
+            ttest_fit!(ttest.chunk_map[tile_indices[batch, tile][2]], trace_tiles[batch, tile], label_tiles[batch])
         end
     end
 end

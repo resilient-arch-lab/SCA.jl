@@ -90,7 +90,7 @@ end
 
 end
 
-@testset "Test SNR chunked implementation" begin
+@testset "Test that Chunked SNR is equivalent on dimension 2" begin
     t = rand(Float64, 2000, 1000)
     l = rand(UInt8, 2000)
 
@@ -106,12 +106,12 @@ end
     @test all(res1 .≈ res2)
 end
 
-@testset "TTest & TTestChunked" begin
-    t = rand(Float64, 2000, 1000)
-    l = UInt8.(rand([0, 1], 2000))
+@testset "Test that Chunked TTest is equivalent on dimension 2" begin
+    t = rand(Float64, 5000, 1000)
+    l = UInt8.(rand([0, 1], 5000))
 
     ttest1 = TTest.TTestSingle{Float64, UInt8}(2, 1000)
-    ttest2 = TTest.TTestChunked{Float64, UInt8}(2, 1000, (2000, 200))
+    ttest2 = TTest.TTestChunked{Float64, UInt8}(2, 1000, (5000, 200))
 
     TTest.ttest_fit!(ttest1, t, l)
     TTest.ttest_fit!(ttest2, t, l)

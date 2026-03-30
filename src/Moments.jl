@@ -632,8 +632,7 @@ function merge_from_ak_gpu!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArra
     order = size(M_old, 1)
     δ_pows = similar(M_old, order + 1, size(M_old, 2))
     # LLVM error: Undefined external symbol "__divti3"
-    # missing external symbol for 128bit integer division, probably from `binomial`
-    # fixed by casting `binomial` args to Int32
+    # missing external symbol for 128bit integer division, probably from `binomial`, fixed by casting `binomial` args to Int32
     @inbounds AK.foraxes(M_old, 2, min_elems=1000) do i
         δ = M_new[1, i] - M_old[1, i]
         total_result = total_old[1] + total_new[1]
