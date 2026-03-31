@@ -6,7 +6,7 @@ using .Utils
 include("Moments.jl")
 using .Moments
 
-mutable struct TTestSingle{Tt<:AbstractFloat, Tl<:Integer}
+struct TTestSingle{Tt<:AbstractFloat, Tl<:Integer}
     moments::UniVarMomentsAcc{Tt, Tl, Array}
     order::Int
     ns::Int
@@ -17,7 +17,7 @@ mutable struct TTestSingle{Tt<:AbstractFloat, Tl<:Integer}
     end
 end
 
-mutable struct TTestChunked{Tt<:AbstractFloat, Tl<:Integer}
+struct TTestChunked{Tt<:AbstractFloat, Tl<:Integer}
     chunksize::NTuple{2, Int}
     chunk_map::Dict{UnitRange, TTestSingle}
     order::Int
@@ -42,6 +42,16 @@ function ttest_fit!(ttest::TTestChunked{Tt, Tl}, traces, labels) where {Tt<:Abst
         for batch in axes(trace_tiles, 1)
             ttest_fit!(ttest.chunk_map[tile_indices[batch, tile][2]], trace_tiles[batch, tile], label_tiles[batch])
         end
+    end
+end
+
+function ttest_fit!(ttest::TTestChunked{Tt, Tl}, idx::UnitRange, traces, labels) where {Tt<:AbstractFloat, Tl<:Integer}
+    if !haskey(ttest.chunk_map, idx)
+        throw(BoundsError)
+    end
+
+    for batch in tiled_view(1:size(traces, 1), (ttest.chunksize[1], ))
+        ttest_fit!(ttest.chunk_map[idx], view(traces, batch, :), view(labels, batch))
     end
 end
 

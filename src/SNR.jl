@@ -99,20 +99,21 @@ function SNR_fit!(snr::Union{SNRMoments{Tt, Tl}, SNROrdered{Tt, Tl}}, traces, la
 end
 
 function SNR_fit!(snr::SNRMomentsChunked{Tt, Tl}, traces, labels) where {Tt<:Real, Tl<:Real}
-    # (trace_tiles, tile_indices) = tiled_view(traces, snr.chunksize; return_indices=true)
-    # label_tiles = tiled_view(labels, (snr.chunksize[1], ))
-
     Threads.@threads for tile in tiled_view(1:size(traces, 2), (snr.chunksize[2], ))
         for batch in tiled_view(1:size(traces, 1), (snr.chunksize[1], ))
             SNR_fit!(snr.chunk_map[tile], traces[batch, tile], labels[batch])
         end
     end
+end
 
-    # Threads.@threads for tile in axes(trace_tiles, 2)
-    #     for batch in axes(trace_tiles, 1)
-    #         SNR_fit!(snr.chunk_map[tile_indices[batch, tile][2]], trace_tiles[batch, tile], label_tiles[batch])
-    #     end
-    # end
+function SNR_fit!(snr::SNRMomentsChunked{Tt, Tl}, idx::UnitRange, traces, labels) where {Tt<:Real, Tl<:Real}
+    if !haskey(snr.chunk_map, idx)
+        throw(BoundsError)
+    end
+
+    for batch in tiled_view(1:size(traces, 1), (snr.chunksize[1], ))
+        SNR_fit!(snr.chunk_map[idx], traces[batch, :], labels[batch])
+    end
 end
 
 function SNR_finalize(snr::SNRBasic{Tt, Tl})::Vector where {Tt<:Real, Tl<:Real}

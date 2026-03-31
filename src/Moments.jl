@@ -266,10 +266,15 @@ end
 
 # works end-to-end on CPU or GPU
 function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    # initialize intermediate values
+    # initialize intermediate values (these could be allocated on `acc` construction)
     sums = fill!(similar(traces, Tt, acc.nl, acc.ns), 0)
     moments = fill!(similar(traces, Tt, size(acc.moments)), 0)
     totals = fill!(similar(traces, UInt32, size(acc.totals)), 0)
+
+    @boundscheck begin
+        checkbounds(sums, acc.nl, size(traces, 2))
+        checkbounds(moments, acc.nl, acc.order, size(traces, 2))
+    end
 
     label_wise_sum_ak!(traces, labels, sums, totals)
 
@@ -353,7 +358,7 @@ function centered_sum_update_combined!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, tr
         # label wise sum
         for i in axes(t_tile, 1)
             l_i = convert(Int32, l_tile[i]+1)
-            Atomix.@atomic t_tile[l_i] += 1
+            Atomix.@atomic t_tile[l_i] += 1  # these probably don't have to be atomic since I'm parallelizing over time here
             Atomix.@atomic s_tile[l_i] += t_tile[i]
         end
         

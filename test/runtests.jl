@@ -91,11 +91,11 @@ end
 end
 
 @testset "Test that Chunked SNR is equivalent on dimension 2" begin
-    t = rand(Float64, 2000, 1000)
-    l = rand(UInt8, 2000)
+    t = rand(Float64, 5000, 1000)
+    l = rand(UInt8, 5000)
 
     snr1 = SNR.SNRMoments{Float64, UInt8, Array}(1000, 256)
-    snr2 = SNR.SNRMomentsChunked{Float64, UInt8, Array}(1000, 256, (2000, 200))
+    snr2 = SNR.SNRMomentsChunked{Float64, UInt8, Array}(1000, 256, (5000, 200))
 
     SNR.SNR_fit!(snr1, t, l)
     SNR.SNR_fit!(snr2, t, l)
@@ -104,6 +104,13 @@ end
     res2 = SNR.SNR_finalize(snr2)
 
     @test all(res1 .≈ res2)
+
+    snr3 = SNR.SNRMomentsChunked{Float64, UInt8, Array}(1000, 256, (5000, 200))
+    for slice in keys(snr3.chunk_map)
+        SNR.SNR_fit!(snr3, slice, t[:, slice], l[:])
+    end
+    res3 = SNR.SNR_finalize(snr3)
+    @test all(res1 .≈ res3)
 end
 
 @testset "Test that Chunked TTest is equivalent on dimension 2" begin
