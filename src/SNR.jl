@@ -102,7 +102,6 @@ function SNR_fit!(snr::SNRMomentsChunked{Tt, Tl}, traces, labels) where {Tt<:Rea
     Threads.@threads for tile in collect(keys(snr.chunk_map))
         for batch in tiled_view(1:size(traces, 1), (snr.chunksize[1], ))
             SNR_fit!(snr.chunk_map[tile], view(traces, batch, tile), view(labels, batch))
-            # ^ runtime dispatched?
         end
     end
 end
