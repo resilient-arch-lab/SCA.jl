@@ -272,6 +272,7 @@ end
 
 # works end-to-end on CPU or GPU
 # TODO: Figure out why this segfaults with AMDGPU when Tarray is ROCArray
+#   Works with CUDA, weird...
 function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     # initialize intermediate values (these could be allocated on `acc` construction)
     fill!(acc._sums, 0)
@@ -327,8 +328,8 @@ function centered_sum_update!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}, 
 
     # compute centered sums
     # @time "centered_sum_kern_ak!" centered_sum_kern_ak!(moments2, traces, labels)  # 15s
-    @time "centered_sum_kern_ak!" @sync for l in axes(labels, 2)
-        Threads.@spawn centered_sum_kern_ak!(view(moments, l, :, :, :), traces, labels[:, l])
+    @time "centered_sum_kern_ak!" Threads.@threads for l in axes(labels, 2)
+        centered_sum_kern_ak!(view(moments, l, :, :, :), traces, labels[:, l])
     end
 
     # merge centered sum estimations
@@ -341,8 +342,8 @@ function centered_sum_update!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}, 
         acc.totals[init_ls] .= totals[init_ls]
     end
     if any(update_ls)
-        @sync for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
-            Threads.@spawn merge_from_ak_gpu!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
+        for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
+            merge_from_ak_gpu!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
         end
         acc.totals[update_ls] .+= totals[update_ls]
     end
@@ -408,70 +409,6 @@ function centered_sum_update_combined!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, tr
         end
         acc.totals[update_ls] .+= totals[update_ls]
     end
-end
-
-# Precision (even with Float64) seems to degrade from performing the same 
-# computation in a single centered_sum_update! for the same data. Use of 
-# this should be minimized, prefer larger update batches whenever possible
-# TODO: depricate in favor of merge_from_kern!
-function merge_from!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, M_new::Array{Tt, 3}, totals_new::Array{UInt32, 1}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    if all(totals_new .== 0)
-        return nothing
-    end
-    if all(acc.totals .== 0)
-        # If this is the first estimation, the acc values can be updated directly
-        acc.moments .= M_new
-        acc.totals .= totals_new
-        return nothing
-    end
-
-    δ = view(M_new, :, 1, :) - view(acc.moments, :, 1, :)
-    δ_pows = fill!(Tarray{Tt, 2}(undef, acc.order+1, acc.ns), 0)
-    M_old, totals_old = view(acc.moments, :, :, :), view(acc.totals, :)
-    totals_result = totals_old .+ totals_new
-    kern_order = Int(acc.order)
-
-    # I'm pretty sure this can't be threaded like this, because the loop modifies δ_pows
-    # Threads.@threads for l_idx in axes(totals_old, 2)
-    for l_idx in axes(totals_old, 1)
-        M_old_i = view(M_old, l_idx, :, :)
-        M_new_i = view(M_new, l_idx, :, :)
-
-        if totals_new[l_idx] == 0
-            continue
-        end
-        if totals_old[l_idx] == 0
-            M_old_i .= M_new_i
-            totals_old[l_idx] = totals_new[l_idx]
-            continue
-        end
-
-        for j in axes(δ_pows, 1)
-            view(δ_pows, j, :) .= view(δ, l_idx, :).^j
-        end
-        for p in kern_order:-1:2
-            (as_input1, to_update1) = view(M_old_i, 1:p-1, :), view(M_old_i, p, :)
-            (as_input2, to_update2) = view(M_new_i, 1:p-1, :), view(M_new_i, p, :)
-
-            to_update1 .+= to_update2
-
-            for k in 1:p-2
-                δ_pows_k = δ_pows[k, :]
-                cst = binomial(k, p)
-                tmp2 = view(as_input1, p-k, :) .* ((-totals_new[l_idx]/totals_result[l_idx]).^k)
-                tmp3 = view(as_input2, p-k, :) .* ((totals_old[l_idx]/totals_result[l_idx]).^k)
-                x = tmp2 .+ tmp3
-                to_update1 .+= (δ_pows_k .* cst) .* x
-            end
-            tmp = (1/(totals_new[l_idx]^(p-1))) - ((-1/totals_old[l_idx])^(p-1))
-            tmp *= ((totals_old[l_idx] * totals_new[l_idx])/totals_result[l_idx])^p
-
-            to_update1 .+= δ_pows[p, :] .* tmp
-        end
-        view(M_old_i, 1, :) .+= (view(δ, l_idx, :) .* (totals_new[l_idx]/totals_result[l_idx]))  # update mean seperately
-    end
-    totals_old .= totals_result
-    return nothing
 end
 
 function merge_from!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, acc_new::UniVarMomentsAcc{Tt, Tl, Tarray}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
@@ -650,9 +587,6 @@ function merge_from_ak_gpu!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArra
     @inbounds AK.foraxes(M_old, 2) do i
         δ = M_new[1, i] - M_old[1, i]
         total_result = total_old[1] + total_new[1]
-        # for j in axes(δ_pows, 1)
-        #     δ_pows[j, i] = δ^j
-        # end
 
         for p in order:-1:2
             (as_input1, to_update1) = view(M_old, 1:p-1, :), view(M_old, p, :)
@@ -671,8 +605,7 @@ function merge_from_ak_gpu!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArra
             tmp = (1/(total_new[1]^(p-1))) - ((-1/total_old[1])^(p-1))  # about 20% of runtime
             tmp *= ((total_old[1] * total_new[1])/total_result[1])^p  # another 20% of the runtime, mostly the exponent (so thats fine)
 
-            # to_update1[i] += δ_pows[p, i] * tmp  # this getindex takes a while
-            to_update1[i] += δ^p * tmp  # this getindex takes a while
+            to_update1[i] += δ^p * tmp
         end
         M_old[1, i] += (δ * (total_new[1]/total_result[1]))  # update mean seperately
     end
