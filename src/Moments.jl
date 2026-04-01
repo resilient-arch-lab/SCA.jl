@@ -299,15 +299,13 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
     moments = Tarray(acc._moments)  # cast to same memory as acc if not already there
     totals = Tarray(acc._totals)  # cast to same memory as acc if not already there
     if any(init_ls)
-        @inbounds acc.moments[init_ls, :, :] .= moments[init_ls, :, :]  # scalar indexing
+        @inbounds acc.moments[init_ls, :, :] .= moments[init_ls, :, :]
         @inbounds acc.totals[init_ls] .= totals[init_ls]
-        # even moving `init_ls` to the same device as `moments` on the second side doesn't make the 
-        # indexing non-scalar. However, if acc is on device memory along with input data this works fine.  
     end
     if any(update_ls)
         for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
             merge_from_ak_gpu!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
-            # roughly 60% of centered_sum_update! runtime
+            # roughly 40% of centered_sum_update! runtime (was 60 before I removed the δ_pows allocation)
             # Also, this is runtime dispatched and garbage collected?
         end
         @inbounds acc.totals[update_ls] .+= totals[update_ls]
@@ -405,8 +403,8 @@ function centered_sum_update_combined!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, tr
         acc.totals[init_ls] .= totals[init_ls]
     end
     if any(update_ls)
-        @sync for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
-            Threads.@spawn merge_from_ak_gpu!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
+        Threads.@threads for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
+            merge_from_ak_gpu!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
         end
         acc.totals[update_ls] .+= totals[update_ls]
     end
