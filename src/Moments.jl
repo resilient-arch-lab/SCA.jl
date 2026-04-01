@@ -18,28 +18,34 @@ using FixedSizeArrays
 # TODO: I'm not convinced this actually needs to be parameterized on the array type, and it
 # does complicate things slightly.
 # TODO: This should be able to handle mutli-dimensional labels (e.g. vector labels)
-mutable struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    totals::Tarray  # Tarray is a typevar, which you can't parameterize directly 
+struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+    totals::Tarray  # Tarray is a typevar, which you can't parameterize directly
     moments::Tarray
-    const order::UInt
-    const ns::UInt
-    const nl::UInt
+    order::UInt
+    ns::UInt
+    nl::UInt
+    _totals::Tarray
+    _moments::Tarray
+    _sums::Tarray
 
     function UniVarMomentsAcc{Tt, Tl, Tarray}(order, ns, nl) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
         totals = fill!(Tarray{UInt32, 1}(undef, nl), 0)
         moments = fill!(Tarray{Tt, 3}(undef, nl, order, ns), 0)
-        new(totals, moments, order, ns, nl)
+        _totals = similar(totals)
+        _moments = similar(moments)
+        _sums = Tarray{Tt, 2}(undef, nl, ns)
+        new(totals, moments, order, ns, nl, _totals, _moments, _sums)
     end
 end
 
 # right now this is slower than running a UniVarMomentsAccs for each label element
-mutable struct UniVarMomentsAccNDLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
+struct UniVarMomentsAccNDLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
     totals::Tarray  # Tarray is a typevar, which you can't parameterize directly 
     moments::Tarray
-    const order::UInt
-    const ns::UInt
-    const nl::UInt
-    const label_shape::NTuple{LD}
+    order::UInt
+    ns::UInt
+    nl::UInt
+    label_shape::NTuple{LD}
 
     function UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}(order, ns, nl, label_shape) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD} 
         totals = fill!(Tarray{UInt32, 1+LD}(undef, label_shape..., nl), 0)
@@ -267,28 +273,29 @@ end
 # works end-to-end on CPU or GPU
 function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     # initialize intermediate values (these could be allocated on `acc` construction)
-    sums = fill!(similar(traces, Tt, acc.nl, acc.ns), 0)
-    moments = fill!(similar(traces, Tt, size(acc.moments)), 0)
-    totals = fill!(similar(traces, UInt32, size(acc.totals)), 0)
+    fill!(acc._sums, 0)
+    fill!(acc._moments, 0)
+    fill!(acc._totals, 0)
 
     @boundscheck begin
-        checkbounds(sums, acc.nl, size(traces, 2))
-        checkbounds(moments, acc.nl, acc.order, size(traces, 2))
+        checkbounds(acc._sums, acc.nl, size(traces, 2))
+        checkbounds(acc._moments, acc.nl, acc.order, size(traces, 2))
+        checkbounds(labels, size(traces, 1))
     end
 
-    label_wise_sum_ak!(traces, labels, sums, totals)
+    label_wise_sum_ak!(traces, labels, acc._sums, acc._totals)
 
     # find means
-    @. moments[:, 1, :] = sums / totals
+    @. acc._moments[:, 1, :] = acc._sums / acc._totals
 
     # compute centered sums
-    centered_sum_kern_ak!(moments, traces, labels)
+    centered_sum_kern_ak!(acc._moments, traces, labels)
 
     # merge centered sum estimations
     init_ls = acc.totals .== 0
     update_ls = acc.totals .!= 0
-    moments = Tarray(moments)  # cast to same memory as acc if not already there
-    totals = Tarray(totals)  # cast to same memory as acc if not already there
+    moments = Tarray(acc._moments)  # cast to same memory as acc if not already there
+    totals = Tarray(acc._totals)  # cast to same memory as acc if not already there
     if any(init_ls)
         acc.moments[init_ls, :, :] .= moments[init_ls, :, :]  # scalar indexing
         acc.totals[init_ls] .= totals[init_ls]

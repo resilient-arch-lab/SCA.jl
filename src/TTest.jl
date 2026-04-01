@@ -6,26 +6,26 @@ using .Utils
 include("Moments.jl")
 using .Moments
 
-struct TTestSingle{Tt<:AbstractFloat, Tl<:Integer}
-    moments::UniVarMomentsAcc{Tt, Tl, Array}
+struct TTestSingle{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+    moments::UniVarMomentsAcc{Tt, Tl, Tarray}
     order::Int
     ns::Int
 
-    function TTestSingle{Tt, Tl}(order::Int, ns::Int) where {Tt<:AbstractFloat, Tl<:Integer}
-        moments = UniVarMomentsAcc{Tt, Tl, Array}(2*order, ns, 2)
+    function TTestSingle{Tt, Tl, Tarray}(order::Int, ns::Int) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+        moments = UniVarMomentsAcc{Tt, Tl, Tarray}(2*order, ns, 2)
         new(moments, order, ns)
     end
 end
 
-struct TTestChunked{Tt<:AbstractFloat, Tl<:Integer}
+struct TTestChunked{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     chunksize::NTuple{2, Int}
     chunk_map::Dict{UnitRange, TTestSingle}
     order::Int
     ns::Int
 
-    function TTestChunked{Tt, Tl}(order::Int, ns::Int, chunksize::NTuple{2, Int}) where {Tt<:AbstractFloat, Tl<:Integer}
+    function TTestChunked{Tt, Tl, Tarray}(order::Int, ns::Int, chunksize::NTuple{2, Int}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
         slices = tiled_view(1:ns, (chunksize[2], ))
-        chunk_map = Dict(slice => TTestSingle{Tt, Tl}(order, size(slice, 1)) for slice in slices)
+        chunk_map = Dict(slice => TTestSingle{Tt, Tl, Tarray}(order, size(slice, 1)) for slice in slices)
         new(chunksize, chunk_map, order, ns)
     end
 end
@@ -55,6 +55,7 @@ function ttest_fit!(ttest::TTestChunked{Tt, Tl}, idx::UnitRange, traces, labels)
     end
 end
 
+# DOES NOT WORK ON GPU (because of scalar indexing in the last line)
 function ttest_finalize(ttest::TTestSingle{Tt, Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     μ, σ = get_mean_and_var(ttest.moments, ttest.order)
     μ1, μ2 = view(μ, 1, :), view(μ, 2, :) 

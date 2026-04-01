@@ -117,8 +117,8 @@ end
     t = rand(Float64, 5000, 1000)
     l = UInt8.(rand([0, 1], 5000))
 
-    ttest1 = TTest.TTestSingle{Float64, UInt8}(2, 1000)
-    ttest2 = TTest.TTestChunked{Float64, UInt8}(2, 1000, (5000, 200))
+    ttest1 = TTest.TTestSingle{Float64, UInt8, Array}(2, 1000)
+    ttest2 = TTest.TTestChunked{Float64, UInt8, Array}(2, 1000, (5000, 200))
 
     TTest.ttest_fit!(ttest1, t, l)
     TTest.ttest_fit!(ttest2, t, l)

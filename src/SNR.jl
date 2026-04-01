@@ -138,8 +138,8 @@ end
 
 function SNR_finalize(snr::SNRMomentsChunked{Tt, Tl})::Vector where {Tt<:Real, Tl<:Integer}
     out = zeros(snr.ns)
-    @sync for slice in collect(keys(snr.chunk_map))
-        @async out[slice] .= SNR_finalize(snr.chunk_map[slice])
+    Threads.@threads for slice in collect(keys(snr.chunk_map))
+        out[slice] .= SNR_finalize(snr.chunk_map[slice])
     end
     out
 end
