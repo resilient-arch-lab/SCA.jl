@@ -73,7 +73,7 @@ end
 
 # Works on CPU and GPU
 function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
-    @inbounds AK.foraxes(traces, 1, min_elems=5000) do i
+    @inbounds AK.foraxes(traces, 1) do i
         l_i = convert(Int32, labels[i]+1)
         Atomix.@atomic totals[l_i] += 1
         for j in axes(traces, 2)
@@ -83,7 +83,7 @@ function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractVector{T
 end
 
 function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
-    @inbounds AK.foraxes(traces, 1, min_elems=5000) do i
+    @inbounds AK.foraxes(traces, 1) do i
         for l in axes(labels, 2)
             l_i = convert(Int32, labels[i, l]+1)
             Atomix.@atomic totals[l, l_i] += 1
@@ -119,7 +119,7 @@ function label_wise_sum_cpu!(traces::AbstractArray, labels::AbstractArray, sums:
 end
 
 function label_wise_sum_scalar!(traces::AbstractVector{Tt}, labels::AbstractVector{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
-    @inbounds AK.foraxes(traces, 1, min_elems=5000) do i
+    @inbounds AK.foraxes(traces, 1) do i
         for l in axes(labels, 2)
             l_i = convert(Int32, labels[i, l]+1)
             Atomix.@atomic totals[l, l_i] += 1
@@ -164,7 +164,7 @@ function centered_sum_kern_ak!(moments::AbstractArray{Tt, 3}, traces::AbstractMa
             pow = t_update
             for d in 2:order
                 pow *= t_update
-                Atomix.@atomic moments[l_i, d, j] += pow
+                Atomix.@atomic moments[l_i, d, j] += pow  # this line is like 90% of this functions runtime
             end
         end
     end
@@ -265,6 +265,7 @@ function centered_sum_update_old!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces:
 end
 
 # works end-to-end on CPU or GPU
+# TODO: Figure out why this segfaults with AMDGPU when Tarray is ROCArray
 function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     # initialize intermediate values (these could be allocated on `acc` construction)
     sums = fill!(similar(traces, Tt, acc.nl, acc.ns), 0)
@@ -283,6 +284,7 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
 
     # compute centered sums
     centered_sum_kern_ak!(moments, traces, labels)
+    # about 30% of centered_sum_update! runtime
 
     # merge centered sum estimations
     init_ls = acc.totals .== 0
@@ -290,16 +292,18 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
     moments = Tarray(moments)  # cast to same memory as acc if not already there
     totals = Tarray(totals)  # cast to same memory as acc if not already there
     if any(init_ls)
-        acc.moments[init_ls, :, :] .= moments[init_ls, :, :]  # scalar indexing
-        acc.totals[init_ls] .= totals[init_ls]
+        @inbounds acc.moments[init_ls, :, :] .= moments[init_ls, :, :]  # scalar indexing
+        @inbounds acc.totals[init_ls] .= totals[init_ls]
         # even moving `init_ls` to the same device as `moments` on the second side doesn't make the 
         # indexing non-scalar. However, if acc is on device memory along with input data this works fine.  
     end
     if any(update_ls)
         for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
             merge_from_ak_gpu!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
+            # roughly 60% of centered_sum_update! runtime
+            # Also, this is runtime dispatched and garbage collected?
         end
-        acc.totals[update_ls] .+= totals[update_ls]
+        @inbounds acc.totals[update_ls] .+= totals[update_ls]
     end
 end
 
@@ -635,33 +639,35 @@ function merge_from_ak_gpu!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArra
     checkbounds(total_new, size(total_old)...)
 
     order = size(M_old, 1)
-    δ_pows = similar(M_old, order + 1, size(M_old, 2))
+    # δ_pows = similar(M_old, order + 1, size(M_old, 2))  # this is 95% of the allocated memory of `centered_sum_update!`
     # LLVM error: Undefined external symbol "__divti3"
     # missing external symbol for 128bit integer division, probably from `binomial`, fixed by casting `binomial` args to Int32
-    @inbounds AK.foraxes(M_old, 2, min_elems=1000) do i
+    @inbounds AK.foraxes(M_old, 2) do i
         δ = M_new[1, i] - M_old[1, i]
         total_result = total_old[1] + total_new[1]
-        for j in axes(δ_pows, 1)
-            δ_pows[j, i] = δ^j
-        end
+        # for j in axes(δ_pows, 1)
+        #     δ_pows[j, i] = δ^j
+        # end
 
         for p in order:-1:2
             (as_input1, to_update1) = view(M_old, 1:p-1, :), view(M_old, p, :)
             (as_input2, to_update2) = view(M_new, 1:p-1, :), view(M_new, p, :)
 
-            to_update1[i] += to_update2[i]
+            to_update1[i] += to_update2[i] 
 
             for k in 1:p-2
                 cst = binomial(Int32(k), Int32(p))  # explicity Int32 cast avoids unnecessary use of arbitrary precision arithmetic 
                 tmp1 = as_input1[p-k, i] * ((-total_new[1]/total_result[1])^k)
                 tmp2 = as_input2[p-k, i] * ((total_old[1]/total_result[1])^k)
                 tmp3 = tmp1 + tmp2
-                to_update1[i] += (δ_pows[k, i] * cst) * tmp3
+                # to_update1[i] += (δ_pows[k, i] * cst) * tmp3
+                to_update1[i] += (δ^k * cst) * tmp3
             end
-            tmp = (1/(total_new[1]^(p-1))) - ((-1/total_old[1])^(p-1))
-            tmp *= ((total_old[1] * total_new[1])/total_result[1])^p
+            tmp = (1/(total_new[1]^(p-1))) - ((-1/total_old[1])^(p-1))  # about 20% of runtime
+            tmp *= ((total_old[1] * total_new[1])/total_result[1])^p  # another 20% of the runtime, mostly the exponent (so thats fine)
 
-            to_update1[i] += δ_pows[p, i] * tmp
+            # to_update1[i] += δ_pows[p, i] * tmp  # this getindex takes a while
+            to_update1[i] += δ^p * tmp  # this getindex takes a while
         end
         M_old[1, i] += (δ * (total_new[1]/total_result[1]))  # update mean seperately
     end

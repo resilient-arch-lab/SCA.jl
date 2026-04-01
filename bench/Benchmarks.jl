@@ -13,8 +13,8 @@ function bench_SNRMoments(TArray::Type = Array)
     l = TArray(rand(UInt8, 300000))
 
     snr1 = SNR.SNRMoments{Float32, UInt8, TArray}(size(t, 2), 256)
-    snr2 = SNR.SNRMomentsChunked{Float32, UInt8, TArray}(size(t, 2), 256, (size(t, 2), 500))
-    snr3 = SNR.SNRMomentsChunked{Float32, UInt8, TArray}(size(t, 2), 256, (size(t, 2), 200))
+    snr2 = SNR.SNRMomentsChunked{Float32, UInt8, TArray}(size(t, 2), 256, (size(t, 1), 500))
+    snr3 = SNR.SNRMomentsChunked{Float32, UInt8, TArray}(size(t, 2), 256, (size(t, 1), 200))
     snr4 = SNR.SNRMomentsChunked{Float32, UInt8, TArray}(size(t, 2), 256, (100000, 500))
     snr5 = SNR.SNRMomentsChunked{Float32, UInt8, TArray}(size(t, 2), 256, (100000, 1000))
     snr6 = SNR.SNRMomentsChunked{Float32, UInt8, TArray}(size(t, 2), 256, (50000, 250))
@@ -35,7 +35,7 @@ function bench_SNRMoments(TArray::Type = Array)
 
     println("Tuning benchmark parameters")
     tune!(bench_suite)
-    run(bench_suite, verbose = true, seconds = 5)
+    run(bench_suite, verbose = true, seconds = 2)
 end
 
 # AcceleratedKernels code is faster on CPU and GPU
