@@ -163,7 +163,7 @@ end
 function centered_sum_kern_ak!(moments::AbstractArray{Tt, 3}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     order = size(moments, 2)
 
-    @inbounds AK.foraxes(traces, 1, min_elems=5000) do i
+    @inbounds AK.foraxes(traces, 1) do i
         l_i = convert(Int32, labels[i]+1)
         for j in axes(traces, 2)
             t_update = traces[i, j] - moments[l_i, 1, j]
@@ -171,6 +171,24 @@ function centered_sum_kern_ak!(moments::AbstractArray{Tt, 3}, traces::AbstractMa
             for d in 2:order
                 pow *= t_update
                 Atomix.@atomic moments[l_i, d, j] += pow  # this line is like 90% of this functions runtime
+            end
+        end
+    end
+end
+
+# way better CPU performance (and better GPU performance) than non
+# transposed version due to elimination of atomic adds
+function centered_sum_kern_ak_transposed!(moments::AbstractArray{Tt, 3}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+    order = size(moments, 2)
+
+    @inbounds AK.foraxes(traces, 2) do j
+        for i in axes(traces, 2)
+            l_i = convert(Int32, labels[i]+1)
+            t_update = traces[i, j] - moments[l_i, 1, j]
+            pow = t_update
+            for d in 2:order
+                pow *= t_update
+                moments[l_i, d, j] += pow
             end
         end
     end
@@ -291,8 +309,9 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
     @. acc._moments[:, 1, :] = acc._sums / acc._totals
 
     # compute centered sums
-    centered_sum_kern_ak!(acc._moments, traces, labels)
+    # centered_sum_kern_ak!(acc._moments, traces, labels)
     # about 30% of centered_sum_update! runtime
+    centered_sum_kern_ak_transposed!(acc._moments, traces, labels)
 
     # merge centered sum estimations
     init_ls = acc.totals .== 0
