@@ -299,7 +299,7 @@ function centered_sum_update_old!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces:
     centered_sum_kern_ak!(moments, traces, labels)
 
     # This has to be performed on CPU for now, its a pretty complicated OP
-    merge_from!(acc, Tarray(moments), Tarray(totals))
+    merge_from_old!(acc, Tarray(moments), Tarray(totals))
 end
 
 # works end-to-end on CPU or GPU
@@ -442,6 +442,69 @@ function centered_sum_update_combined!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, tr
         end
         acc.totals[update_ls] .+= totals[update_ls]
     end
+end
+
+# Precision (even with Float64) seems to degrade from performing the same 
+# computation in a single centered_sum_update! for the same data. Use of 
+# this should be minimized, prefer larger update batches whenever possible
+function merge_from_old!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, M_new::Array{Tt, 3}, totals_new::Array{UInt32, 1}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+    if all(totals_new .== 0)
+        return nothing
+    end
+    if all(acc.totals .== 0)
+        # If this is the first estimation, the acc values can be updated directly
+        acc.moments .= M_new
+        acc.totals .= totals_new
+        return nothing
+    end
+
+    δ = view(M_new, :, 1, :) - view(acc.moments, :, 1, :)
+    δ_pows = fill!(Tarray{Tt, 2}(undef, acc.order+1, acc.ns), 0)
+    M_old, totals_old = view(acc.moments, :, :, :), view(acc.totals, :)
+    totals_result = totals_old .+ totals_new
+    kern_order = Int(acc.order)
+
+    # I'm pretty sure this can't be threaded like this, because the loop modifies δ_pows
+    # Threads.@threads for l_idx in axes(totals_old, 2)
+    for l_idx in axes(totals_old, 1)
+        M_old_i = view(M_old, l_idx, :, :)
+        M_new_i = view(M_new, l_idx, :, :)
+
+        if totals_new[l_idx] == 0
+            continue
+        end
+        if totals_old[l_idx] == 0
+            M_old_i .= M_new_i
+            totals_old[l_idx] = totals_new[l_idx]
+            continue
+        end
+
+        for j in axes(δ_pows, 1)
+            view(δ_pows, j, :) .= view(δ, l_idx, :).^j
+        end
+        for p in kern_order:-1:2
+            (as_input1, to_update1) = view(M_old_i, 1:p-1, :), view(M_old_i, p, :)
+            (as_input2, to_update2) = view(M_new_i, 1:p-1, :), view(M_new_i, p, :)
+
+            to_update1 .+= to_update2
+
+            for k in 1:p-2
+                δ_pows_k = δ_pows[k, :]
+                cst = binomial(k, p)
+                tmp2 = view(as_input1, p-k, :) .* ((-totals_new[l_idx]/totals_result[l_idx]).^k)
+                tmp3 = view(as_input2, p-k, :) .* ((totals_old[l_idx]/totals_result[l_idx]).^k)
+                x = tmp2 .+ tmp3
+                to_update1 .+= (δ_pows_k .* cst) .* x
+            end
+            tmp = (1/(totals_new[l_idx]^(p-1))) - ((-1/totals_old[l_idx])^(p-1))
+            tmp *= ((totals_old[l_idx] * totals_new[l_idx])/totals_result[l_idx])^p
+
+            to_update1 .+= δ_pows[p, :] .* tmp
+        end
+        view(M_old_i, 1, :) .+= (view(δ, l_idx, :) .* (totals_new[l_idx]/totals_result[l_idx]))  # update mean seperately
+    end
+    totals_old .= totals_result
+    return nothing
 end
 
 function merge_from!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, acc_new::UniVarMomentsAcc{Tt, Tl, Tarray}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
