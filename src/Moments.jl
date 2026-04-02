@@ -78,12 +78,26 @@ end
 end
 
 # Works on CPU and GPU
+# Faster on GPU than transposed version
 function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     @inbounds AK.foraxes(traces, 1) do i
         l_i = convert(Int32, labels[i]+1)
         Atomix.@atomic totals[l_i] += 1
         for j in axes(traces, 2)
             Atomix.@atomic sums[l_i, j] += traces[i, j]
+        end
+    end
+end
+
+# Faster on CPU than non-transposed
+function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
+    @inbounds AK.foraxes(traces, 2) do j
+        for i in axes(traces, 1)
+            l_i = convert(Int32, labels[i]+1)
+            if j == 1
+                totals[l_i] += 1
+            end
+            sums[l_i, j] += traces[i, j]
         end
     end
 end
@@ -182,7 +196,7 @@ function centered_sum_kern_ak_transposed!(moments::AbstractArray{Tt, 3}, traces:
     order = size(moments, 2)
 
     @inbounds AK.foraxes(traces, 2) do j
-        for i in axes(traces, 2)
+        for i in axes(traces, 1)
             l_i = convert(Int32, labels[i]+1)
             t_update = traces[i, j] - moments[l_i, 1, j]
             pow = t_update
@@ -303,7 +317,7 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
         checkbounds(labels, size(traces, 1))
     end
 
-    label_wise_sum_ak!(traces, labels, acc._sums, acc._totals)
+    label_wise_sum_ak_transposed!(traces, labels, acc._sums, acc._totals)
 
     # find means
     @. acc._moments[:, 1, :] = acc._sums / acc._totals
