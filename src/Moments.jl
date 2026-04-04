@@ -46,11 +46,17 @@ struct UniVarMomentsAccNDLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractA
     ns::UInt
     nl::UInt
     label_shape::NTuple{LD}
+    _totals::Tarray
+    _moments::Tarray
+    _sums::Tarray
 
     function UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}(order, ns, nl, label_shape) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD} 
         totals = fill!(Tarray{UInt32, 1+LD}(undef, label_shape..., nl), 0)
         moments = fill!(Tarray{Tt, 3+LD}(undef, label_shape..., nl, order, ns), 0)
-        new{Tt, Tl, Tarray, LD}(totals, moments, order, ns, nl, label_shape)
+        _totals = similar(totals)
+        _moments = similar(moments)
+        _sums = Tarray{Tt, 2+LD}(undef, label_shape..., nl, ns)
+        new{Tt, Tl, Tarray, LD}(totals, moments, order, ns, nl, label_shape, _totals, _moments, _sums)
     end
 end
 
@@ -103,12 +109,14 @@ function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::Abstr
 end
 
 function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
-    @inbounds AK.foraxes(traces, 1) do i
-        for l in axes(labels, 2)
-            l_i = convert(Int32, labels[i, l]+1)
-            Atomix.@atomic totals[l, l_i] += 1
-            for j in axes(traces, 2)
-                Atomix.@atomic sums[l, l_i, j] += traces[i, j]
+    @inbounds AK.foraxes(traces, 2) do j
+        for i in axes(traces, 1)
+            for l in axes(labels, 2)
+                l_i = convert(Int32, labels[i, l]+1)
+                if j == 1
+                    totals[l, l_i] += 1
+                end
+                sums[l, l_i, j] += traces[i, j]
             end
         end
     end
@@ -211,15 +219,15 @@ end
 function centered_sum_kern_ak!(moments::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     order = size(moments, 3)
 
-    @inbounds AK.foraxes(traces, 1, min_elems=5000) do i
-        for l in axes(labels, 2)
-            l_i = convert(Int32, labels[i, l]+1)
-            for j in axes(traces, 2)
+    @inbounds AK.foraxes(traces, 2) do j
+        for i in axes(traces, 1)
+            for l in axes(labels, 2)
+                l_i = convert(Int32, labels[i, l]+1)
                 t_update = traces[i, j] - moments[l, l_i, 1, j]
                 pow = t_update
                 for d in 2:order
                     pow *= t_update
-                    Atomix.@atomic moments[l, l_i, d, j] += pow
+                    moments[l, l_i, d, j] += pow
                 end
             end
         end
@@ -338,7 +346,7 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
     end
     if any(update_ls)
         for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
-            merge_from_ak_gpu!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
+            @inbounds merge_from_ak_gpu!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
             # roughly 40% of centered_sum_update! runtime (was 60 before I removed the δ_pows allocation)
             # Also, this is runtime dispatched and garbage collected?
         end
@@ -350,35 +358,35 @@ end
 # No overhead compared to scalar labels on GPUs though
 function centered_sum_update!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
     # Initialize intermediate values
-    sums = fill!(similar(traces, Tt, acc.label_shape..., acc.nl, acc.ns), 0)
-    moments = fill!(similar(traces, Tt, size(acc.moments)), 0)
-    totals = fill!(similar(traces, UInt32, size(acc.totals)), 0)
+    fill!(acc._sums, 0)
+    fill!(acc._moments, 0)
+    fill!(acc._totals, 0)
 
-    @time "label_wise_sum_ak!" label_wise_sum_ak!(traces, labels, sums, totals)
+    @time "label_wise_sum_ak!" label_wise_sum_ak!(traces, labels, acc._sums, acc._totals)
 
     # find means
-    @time "means" @. moments[:, :, 1, :] = sums / totals
+    @time "means" @. acc._moments[:, :, 1, :] = acc._sums / acc._totals
 
     # compute centered sums
     # @time "centered_sum_kern_ak!" centered_sum_kern_ak!(moments2, traces, labels)  # 15s
     @time "centered_sum_kern_ak!" Threads.@threads for l in axes(labels, 2)
-        centered_sum_kern_ak!(view(moments, l, :, :, :), traces, labels[:, l])
+        centered_sum_kern_ak_transposed!(view(acc._moments, l, :, :, :), traces, view(labels, :, l))
     end
 
     # merge centered sum estimations
     init_ls = acc.totals .== 0
     update_ls = acc.totals .!= 0
-    moments = Tarray(moments)  # cast to same memory as acc if not already there
-    totals = Tarray(totals)  # cast to same memory as acc if not already there
+    moments = Tarray(acc._moments)  # cast to same memory as acc if not already there
+    totals = Tarray(acc._totals)  # cast to same memory as acc if not already there
     if any(init_ls)
-        acc.moments[init_ls, :, :] .= moments[init_ls, :, :]
-        acc.totals[init_ls] .= totals[init_ls]
+        @inbounds acc.moments[init_ls, :, :] .= moments[init_ls, :, :]
+        @inbounds acc.totals[init_ls] .= totals[init_ls]
     end
     if any(update_ls)
         for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
             merge_from_ak_gpu!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
         end
-        acc.totals[update_ls] .+= totals[update_ls]
+        @inbounds acc.totals[update_ls] .+= totals[update_ls]
     end
 end
 
@@ -673,9 +681,11 @@ function merge_from_ak!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UI
 end
 
 function merge_from_ak_gpu!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UInt32, 0}, M_new::AbstractArray{Tt, 2}, total_new::AbstractArray{UInt32, 0}) where { Tt<:AbstractFloat }
-    checkbounds(M_new, size(M_old)...)
-    checkbounds(total_new, size(total_old)...)
-
+    @boundscheck begin
+        checkbounds(M_new, size(M_old)...)
+        checkbounds(total_new, size(total_old)...)
+    end
+    
     order = size(M_old, 1)
     # δ_pows = similar(M_old, order + 1, size(M_old, 2))  # this is 95% of the allocated memory of `centered_sum_update!`
     # LLVM error: Undefined external symbol "__divti3"

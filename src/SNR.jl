@@ -127,18 +127,15 @@ function SNR_finalize(snr::SNRBasic{Tt, Tl})::Vector where {Tt<:Real, Tl<:Real}
 end
 
 function SNR_finalize(snr::SNRMoments{Tt, Tl})::Vector where {Tt<:Real, Tl<:Integer}
-    means = snr.moments.moments[:, 1, :]
-    signals = var(means, dims=1)
-    
-    vars = (snr.moments.moments[:, 2, :] ./ snr.moments.totals)
-    noises = mean(vars, dims=1)
-
+    μ, σ2 = get_mean_and_var(snr.moments, 1)
+    signals = var(μ, dims=1)
+    noises = mean(σ2, dims=1)
     vec(signals ./ noises)
 end
 
 function SNR_finalize(snr::SNRMomentsChunked{Tt, Tl})::Vector where {Tt<:Real, Tl<:Integer}
     out = zeros(snr.ns)
-    Threads.@threads for slice in collect(keys(snr.chunk_map))
+    for slice in collect(keys(snr.chunk_map))
         out[slice] .= SNR_finalize(snr.chunk_map[slice])
     end
     out
