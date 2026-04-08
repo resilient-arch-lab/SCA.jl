@@ -1,38 +1,53 @@
 module SCAGPUArraysExt
 
 using SCA
+using SCA.Moments: UniVarMomentsAcc, label_wise_sum_ak!, centered_sum_kern_ak_transposed!, merge_from_ak!
 using GPUArrays
 using KernelAbstractions
 
-# function Moments.centered_sum_update!(acc::Moments.UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractGPUMatrix{Tt}, labels::AbstractGPUVector{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-#     # Initialize intermediate values
-#     sums = fill!(similar(traces, Tt, acc.nl, acc.ns), 0)
-#     moments = fill!(similar(traces, Tt, size(acc.moments)), 0)
-#     totals = fill!(similar(traces, UInt32, size(acc.totals)), 0)
+function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractGPUArray{Tt}, labels::AbstractGPUArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractGPUArray}
+    # initialize intermediate values (these could be allocated on `acc` construction)
+    fill!(acc._sums, 0)
+    fill!(acc._moments, 0)
+    fill!(acc._totals, 0)
 
-#     # compile kernels
-#     # _label_wise_sum_kern = Moments.label_wise_sum_shared!(get_backend(traces), (4, 64))
-#     # _centered_sum_kern = Moments.centered_sum_kern!(get_backend(moments), (1, 256))
+    if get_backend(traces) != get_backend(acc._sums) || get_backend(labels) != get_backend(acc._sums)
+        traces = Tarray(traces)
+        labels = Tarray(labels)
+    end
 
-#     # _label_wise_sum_kern(traces, labels, sums, totals, ndrange=size(traces))
-#     # label_wise_sum_cpu!(traces, labels, sums, totals)
-#     # KernelAbstractions.synchronize(get_backend(sums))
-#     Moments.label_wise_sum_ak!(traces, labels, sums, totals)
+    @boundscheck begin
+        checkbounds(acc._sums, acc.nl, size(traces, 2))
+        checkbounds(acc._moments, acc.nl, acc.order, size(traces, 2))
+        checkbounds(labels, size(traces, 1))
+    end
 
-#     # find means
-#     @. moments[:, 1, :] = sums / totals
+    label_wise_sum_ak!(traces, labels, acc._sums, acc._totals)
 
-#     # compute centered sums
-#     # _centered_sum_kern(moments, traces, labels, ndrange=size(traces))
-#     # KernelAbstractions.synchronize(get_backend(sums))
-#     Moments.centered_sum_kern_ak!(moments, traces, labels)
+    # find means
+    @. acc._moments[:, 1, :] = acc._sums / acc._totals
 
-#     # This has to be performed on CPU for now, its a pretty complicated OP
-#     Moments.merge_from!(acc, Tarray(moments), Tarray(totals))
-#     # for l in axes(moments, 1)
-#     #     Moments.merge_from_ak!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
-#     # end
-# end
+    # compute centered sums
+    # centered_sum_kern_ak!(acc._moments, traces, labels)
+    # about 30% of centered_sum_update! runtime
+    centered_sum_kern_ak_transposed!(acc._moments, traces, labels)
+
+    # merge centered sum estimations
+    init_ls = acc.totals .== 0
+    update_ls = acc.totals .!= 0
+    if any(init_ls)
+        @inbounds acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
+        @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
+    end
+    if any(update_ls)
+        Threads.@threads for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
+            @inbounds merge_from_ak!(view(acc.moments, l, :, :), view(acc.totals, l), view(acc._moments, l, :, :), view(acc._totals, l))
+            # roughly 40% of centered_sum_update! runtime (was 60 before I removed the δ_pows allocation)
+            # Also, this is runtime dispatched and garbage collected?
+        end
+        @inbounds acc.totals[update_ls] .+= acc._totals[update_ls]
+    end
+end
 
 
 end

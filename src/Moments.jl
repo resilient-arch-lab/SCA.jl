@@ -218,16 +218,18 @@ end
 
 function centered_sum_kern_ak!(moments::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     order = size(moments, 3)
+    to_update = @view moments[:, :, 2:end, :]
 
     @inbounds AK.foraxes(traces, 2) do j
         for i in axes(traces, 1)
+            t_i = traces[i, j]
             for l in axes(labels, 2)
                 l_i = convert(Int32, labels[i, l]+1)
-                t_update = traces[i, j] - moments[l, l_i, 1, j]
+                t_update = t_i - moments[l, l_i, 1, j]
                 pow = t_update
-                for d in 2:order
+                for d in axes(to_update, 3)
                     pow *= t_update
-                    moments[l, l_i, d, j] += pow
+                    to_update[l, l_i, d, j] += pow
                 end
             end
         end
@@ -251,38 +253,6 @@ function centered_sum_cpu!(moments::AbstractArray{Tt, 3}, traces::AbstractMatrix
             for d in 2:order
                 pow .*= t_update
                 moment_tile[l_i, d, :] .+= pow
-            end
-        end
-    end
-end
-
-# still VERY slow for some reason
-# (insane amount of allocations, figure out from where)
-function centered_sum_cpu!(moments::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
-    order = size(moments, 3)
-    samples_per_thread = cld(size(traces, 2), Threads.nthreads())
-    trace_tiles = tiled_view(traces, (size(traces, 1), samples_per_thread))
-    moment_tiles = tiled_view(moments, (size(moments)[1:3]..., samples_per_thread))
-
-    Threads.@threads for tile_idx in axes(trace_tiles, 2)
-        @inbounds begin
-            trace_tile = trace_tiles[1, tile_idx]
-            moment_tile = moment_tiles[1, 1, 1, tile_idx]
-            l_i = Vector{UInt32}(undef, size(labels, 2))
-            t_update = Array{Tt, 2}(undef, size(l_i, 1), size(trace_tile, 2))
-            pow = similar(t_update)
-            
-            for i in axes(trace_tile, 1)
-                l_i .= convert.(Int32, labels[i, :].+1)
-                moment_idx = CartesianIndex.(axes(l_i, 1), l_i)
-
-                t_update .= @views reshape(trace_tile[i, :], 1, :) .- moment_tile[moment_idx, 1, :]
-                pow .= t_update
-
-                for d in 2:order
-                    pow .*= t_update
-                    moment_tile[moment_idx, d, :] .+= pow
-                end
             end
         end
     end
@@ -319,6 +289,11 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
     fill!(acc._moments, 0)
     fill!(acc._totals, 0)
 
+    if get_backend(traces) != get_backend(acc._sums) || get_backend(labels) != get_backend(acc._sums)
+        traces = Tarray(traces)
+        labels = Tarray(labels)
+    end
+
     @boundscheck begin
         checkbounds(acc._sums, acc.nl, size(traces, 2))
         checkbounds(acc._moments, acc.nl, acc.order, size(traces, 2))
@@ -338,20 +313,19 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
     # merge centered sum estimations
     init_ls = acc.totals .== 0
     update_ls = acc.totals .!= 0
-    moments = Tarray(acc._moments)  # cast to same memory as acc if not already there
-    totals = Tarray(acc._totals)  # cast to same memory as acc if not already there
     if any(init_ls)
-        @inbounds acc.moments[init_ls, :, :] .= moments[init_ls, :, :]
-        @inbounds acc.totals[init_ls] .= totals[init_ls]
+        @inbounds acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
+        @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
     end
     if any(update_ls)
-        for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
-            @inbounds merge_from_ak_gpu!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
+        Threads.@threads for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
+            @inbounds merge_from_ak!(view(acc.moments, l, :, :), view(acc.totals, l), view(acc._moments, l, :, :), view(acc._totals, l))
             # roughly 40% of centered_sum_update! runtime (was 60 before I removed the δ_pows allocation)
             # Also, this is runtime dispatched and garbage collected?
         end
-        @inbounds acc.totals[update_ls] .+= totals[update_ls]
+        @inbounds acc.totals[update_ls] .+= acc._totals[update_ls]
     end
+    return nothing
 end
 
 # This is still horrendously slow on CPU, must fix. 
@@ -362,93 +336,37 @@ function centered_sum_update!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}, 
     fill!(acc._moments, 0)
     fill!(acc._totals, 0)
 
+    if get_backend(traces) != get_backend(acc._sums) || get_backend(labels) != get_backend(acc._sums)
+        print("backend mismatch")
+        traces = Tarray(traces)
+        labels = Tarray(labels)
+    end
+
     @time "label_wise_sum_ak!" label_wise_sum_ak!(traces, labels, acc._sums, acc._totals)
 
     # find means
     @time "means" @. acc._moments[:, :, 1, :] = acc._sums / acc._totals
 
     # compute centered sums
-    # @time "centered_sum_kern_ak!" centered_sum_kern_ak!(moments2, traces, labels)  # 15s
-    @time "centered_sum_kern_ak!" Threads.@threads for l in axes(labels, 2)
-        centered_sum_kern_ak_transposed!(view(acc._moments, l, :, :, :), traces, view(labels, :, l))
-    end
+    @time "centered_sum_kern_ak!" centered_sum_kern_ak!(acc._moments, traces, labels)  # 15s
+    # @time "centered_sum_kern_ak!" for l in axes(labels, 2)
+    # centered_sum_kern_ak_transposed!(view(acc._moments, l, :, :, :), traces, view(labels, :, l))
+    # end
 
     # merge centered sum estimations
-    init_ls = acc.totals .== 0
-    update_ls = acc.totals .!= 0
-    moments = Tarray(acc._moments)  # cast to same memory as acc if not already there
-    totals = Tarray(acc._totals)  # cast to same memory as acc if not already there
-    if any(init_ls)
-        @inbounds acc.moments[init_ls, :, :] .= moments[init_ls, :, :]
-        @inbounds acc.totals[init_ls] .= totals[init_ls]
-    end
-    if any(update_ls)
-        for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
-            merge_from_ak_gpu!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
+    @time "merge" begin
+        init_ls = acc.totals .== 0
+        update_ls = acc.totals .!= 0
+        if any(init_ls)
+            @inbounds acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
+            @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
         end
-        @inbounds acc.totals[update_ls] .+= totals[update_ls]
-    end
-end
-
-function centered_sum_update_combined!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    sums = fill!(similar(traces, Tt, acc.nl, acc.ns), 0)
-    moments = fill!(similar(traces, Tt, size(acc.moments)), 0)
-    totals = fill!(similar(traces, UInt32, size(acc.totals)), 0)
-
-    traces_tiles = FixedSizeArray.(tiled_view(traces, (size(traces, 1), 1)))
-    sums_tiles = FixedSizeArray.(tiled_view(sums, (size(sums, 1), 1)))
-    moments_tiles = FixedSizeArray.(tiled_view(moments, (size(moments)[1:2]..., 1)))
-    
-    @time AK.foraxes(traces, 2) do j
-        t_tile = traces_tiles[1, j]
-        s_tile = sums_tiles[1, j]
-        m_tile = moments_tiles[1, 1, j]
-        l_tile = labels
-        order = size(m_tile, 2)
-        
-        # label wise sum
-        for i in axes(t_tile, 1)
-            l_i = convert(Int32, l_tile[i]+1)
-            Atomix.@atomic t_tile[l_i] += 1  # these probably don't have to be atomic since I'm parallelizing over time here
-            Atomix.@atomic s_tile[l_i] += t_tile[i]
-        end
-        
-        # compute means
-        for l in axes(m_tile, 1)
-            m_tile[l] = sums[l] / totals[l]
-        end
-
-        # centered sum kernel
-        for i in axes(t_tile, 1)
-            l_i = convert(Int32, l_tile[i]+1)
-            t_update = t_tile[i] - m_tile[l_i, 1]
-            pow = t_update
-            for d in 2:order
-                pow *= t_update
-                Atomix.@atomic m_tile[l_i, d] += pow
+        if any(update_ls)
+            for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
+                merge_from_ak!(view(acc.moments, l, :, :), view(acc.totals, l), view(acc._moments, l, :, :), view(acc._totals, l))
             end
+            @inbounds acc.totals[update_ls] .+= acc._totals[update_ls]
         end
-
-        # merge from
-        # for l in axes(m_tile, 1)
-            
-        # end
-    end
-
-    # merge centered sum estimations
-    init_ls = acc.totals .== 0
-    update_ls = acc.totals .!= 0
-    moments = Tarray(moments)  # cast to same memory as acc if not already there
-    totals = Tarray(totals)  # cast to same memory as acc if not already there
-    if any(init_ls)
-        acc.moments[init_ls, :, :] .= moments[init_ls, :, :]
-        acc.totals[init_ls] .= totals[init_ls]
-    end
-    if any(update_ls)
-        Threads.@threads for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
-            merge_from_ak_gpu!(view(acc.moments, l, :, :), view(acc.totals, l), view(moments, l, :, :), view(totals, l))
-        end
-        acc.totals[update_ls] .+= totals[update_ls]
     end
 end
 
@@ -633,63 +551,12 @@ function merge_from_kern!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{
 end
 
 function merge_from_ak!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UInt32, 0}, M_new::AbstractArray{Tt, 2}, total_new::AbstractArray{UInt32, 0}) where { Tt<:AbstractFloat }
-    checkbounds(M_new, size(M_old)...)
-    checkbounds(total_new, size(total_old)...)
- 
-    if total_new .== 0
-        # println("empty update")
-        return nothing
-    end
-    if total_old .== 0
-        # println("fresh update")
-        M_old .= M_new
-        total_old .= total_new
-        return nothing
-    end
-
-    order = size(M_old, 1)
-    δ = M_new[1, :] .- M_old[1, :]
-    δ_pows = zeros(Tt, order + 1, size(M_old, 2))
-    total_result = total_old .+ total_new
-    (tmp1, tmp2, tmp3) = (zeros(Tt, size(M_old, 2)) for _ in 1:3)
-    @inbounds AK.foraxes(M_old, 2, min_elems=1000) do i
-        for j in axes(δ_pows, 1)
-            δ_pows[j, i] = δ[i]^j
-        end
-
-        for p in order:-1:2
-            (as_input1, to_update1) = view(M_old, 1:p-1, :), view(M_old, p, :)
-            (as_input2, to_update2) = view(M_new, 1:p-1, :), view(M_new, p, :)
-
-            to_update1[i] += to_update2[i]
-
-            for k in 1:p-2
-                cst = binomial(k, p)
-                tmp1[i] = as_input1[p-k, i] * ((-total_new[1]/total_result[1])^k)
-                tmp2[i] = as_input2[p-k, i] * ((total_old[1]/total_result[1])^k)
-                tmp3[i] = tmp1[i] + tmp2[i]
-                to_update1[i] += (δ_pows[k, i] * cst) * tmp3[i]
-            end
-            tmp = (1/(total_new[1]^(p-1))) - ((-1/total_old[1])^(p-1))
-            tmp *= ((total_old[1] * total_new[1])/total_result[1])^p
-
-            to_update1[i] += δ_pows[p, i] * tmp
-        end
-        M_old[1, i] += (δ[i] * (total_new[1]/total_result[1]))  # update mean seperately
-    end
-    @inbounds total_old .= total_result
-end
-
-function merge_from_ak_gpu!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UInt32, 0}, M_new::AbstractArray{Tt, 2}, total_new::AbstractArray{UInt32, 0}) where { Tt<:AbstractFloat }
     @boundscheck begin
         checkbounds(M_new, size(M_old)...)
         checkbounds(total_new, size(total_old)...)
     end
     
     order = size(M_old, 1)
-    # δ_pows = similar(M_old, order + 1, size(M_old, 2))  # this is 95% of the allocated memory of `centered_sum_update!`
-    # LLVM error: Undefined external symbol "__divti3"
-    # missing external symbol for 128bit integer division, probably from `binomial`, fixed by casting `binomial` args to Int32
     @inbounds AK.foraxes(M_old, 2) do i
         δ = M_new[1, i] - M_old[1, i]
         total_result = total_old[1] + total_new[1]
