@@ -14,6 +14,7 @@ using KernelAbstractions, Atomix
 import AcceleratedKernels as AK
 using Base: convert
 using FixedSizeArrays
+using Dagger
 
 # TODO: I'm not convinced this actually needs to be parameterized on the array type, and it
 # does complicate things slightly.
@@ -283,6 +284,7 @@ end
 # works end-to-end on CPU or GPU
 # TODO: Figure out why this segfaults with AMDGPU when Tarray is ROCArray
 #   Works with CUDA, weird...
+#   - It happens during merging, on init
 function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     # initialize intermediate values (these could be allocated on `acc` construction)
     fill!(acc._sums, 0)
@@ -359,15 +361,59 @@ function centered_sum_update!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}, 
         update_ls = acc.totals .!= 0
         if any(init_ls)
             @inbounds acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
-            @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
+            # @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
         end
         if any(update_ls)
             for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
                 merge_from_ak!(view(acc.moments, l, :, :), view(acc.totals, l), view(acc._moments, l, :, :), view(acc._totals, l))
             end
-            @inbounds acc.totals[update_ls] .+= acc._totals[update_ls]
+            # @inbounds acc.totals[update_ls] .+= acc._totals[update_ls]
         end
     end
+end
+
+# Assume that the dataset has been split over the time axis between nodes already. Any distributed
+# parallelism added in this function should consider that.
+function centered_sum_update_dagger!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+    @boundscheck begin
+        checkbounds(acc._sums, acc.nl, size(traces, 2))
+        checkbounds(acc._moments, acc.nl, acc.order, size(traces, 2))
+        checkbounds(labels, size(traces, 1))
+    end
+    
+    Dagger.@spawn fill!(acc._sums, 0)
+    Dagger.@spawn fill!(acc._moments, 0)
+    Dagger.@spawn fill!(acc._totals, 0)
+
+    # I want to see if I can distribute and reduce each pass in the two pass estimation, so that
+    # I can have distributed parallelism without the numerical instability of merging estimations
+
+    # split traces / labels, distribute and process, then sum the results
+    label_wise_sum_ak_transposed!(traces, labels, acc._sums, acc._totals)
+
+    # find means
+    @. acc._moments[:, 1, :] = acc._sums / acc._totals
+
+    # compute centered sums
+    # The same process can be followed here as for label_wise_sum
+    centered_sum_kern_ak_transposed!(acc._moments, traces, labels)
+
+    # merge centered sum estimations
+    init_ls = acc.totals .== 0
+    update_ls = acc.totals .!= 0
+    if any(init_ls)
+        @inbounds acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
+        @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
+    end
+    if any(update_ls)
+        Threads.@threads for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
+            @inbounds merge_from_ak!(view(acc.moments, l, :, :), view(acc.totals, l), view(acc._moments, l, :, :), view(acc._totals, l))
+            # roughly 40% of centered_sum_update! runtime (was 60 before I removed the δ_pows allocation)
+            # Also, this is runtime dispatched and garbage collected?
+        end
+        @inbounds acc.totals[update_ls] .+= acc._totals[update_ls]
+    end
+    return nothing
 end
 
 # Precision (even with Float64) seems to degrade from performing the same 
