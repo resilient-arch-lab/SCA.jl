@@ -374,29 +374,45 @@ end
 
 # Assume that the dataset has been split over the time axis between nodes already. Any distributed
 # parallelism added in this function should consider that.
-function centered_sum_update_dagger!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+# State:
+#   totals are accurate, moments are not.
+#   changing the scope of the sums and totals shards changed the results
+#   The issue could have something to do with the fact that by default, shards are created per worker, not per thread. If
+#   the scheduler makes multiple calls to label_wise_sum per worker there would be bad accesses to the shards (I think)
+function centered_sum_update_dagger!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}, ctx::Context, chunksize::Int) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+    # I want to see if I can distribute and reduce each pass in the two pass estimation, so that
+    # I can have distributed parallelism without the numerical instability of merging estimations
+    
     @boundscheck begin
         checkbounds(acc._sums, acc.nl, size(traces, 2))
         checkbounds(acc._moments, acc.nl, acc.order, size(traces, 2))
         checkbounds(labels, size(traces, 1))
     end
+
+    # For each Proccessor (worker) in ctx.procs, return the set of ThreadProc / GPUDeviceProc it contains
+    sub_processors = Dagger.get_processors.(ctx.procs)
     
-    Dagger.@spawn fill!(acc._sums, 0)
-    Dagger.@spawn fill!(acc._moments, 0)
-    Dagger.@spawn fill!(acc._totals, 0)
+    _sums = Dagger.@shard zeros(eltype(acc._sums), size(acc._sums))
+    _totals = Dagger.@shard zeros(eltype(acc._totals), size(acc._totals))
 
-    # I want to see if I can distribute and reduce each pass in the two pass estimation, so that
-    # I can have distributed parallelism without the numerical instability of merging estimations
-
-    # split traces / labels, distribute and process, then sum the results
-    label_wise_sum_ak_transposed!(traces, labels, acc._sums, acc._totals)
+    # (assuming that if traces and labels are DArrays then they are distributed amongst procs in ctx)
+    @sync for slice in tiled_view(axes(traces, 1), (chunksize, ))
+        Dagger.@spawn label_wise_sum_ak_transposed!(traces[slice, :], labels[slice], _sums, _totals)
+    end
+    acc._sums .= .+(map(shard->fetch(shard), _sums)...)
+    acc._totals .= .+(map(shard->fetch(shard), _totals)...)
 
     # find means
+    fill!(acc._moments, 0)
     @. acc._moments[:, 1, :] = acc._sums / acc._totals
+    _moments = Dagger.@shard acc._moments
 
     # compute centered sums
     # The same process can be followed here as for label_wise_sum
-    centered_sum_kern_ak_transposed!(acc._moments, traces, labels)
+    @sync for slice in tiled_view(axes(traces, 1), (chunksize, ))
+        Dagger.@spawn centered_sum_kern_ak_transposed!(_moments, traces[slice, :], labels[slice])
+    end
+    acc._moments[:, 2:end, :] .= (.+(map(shard->fetch(shard), _moments)...))[:, 2:end, :]
 
     # merge centered sum estimations
     init_ls = acc.totals .== 0
@@ -406,12 +422,7 @@ function centered_sum_update_dagger!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, trac
         @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
     end
     if any(update_ls)
-        Threads.@threads for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
-            @inbounds merge_from_ak!(view(acc.moments, l, :, :), view(acc.totals, l), view(acc._moments, l, :, :), view(acc._totals, l))
-            # roughly 40% of centered_sum_update! runtime (was 60 before I removed the δ_pows allocation)
-            # Also, this is runtime dispatched and garbage collected?
-        end
-        @inbounds acc.totals[update_ls] .+= acc._totals[update_ls]
+        throw(ErrorException("Not supposed to happen!"))
     end
     return nothing
 end
