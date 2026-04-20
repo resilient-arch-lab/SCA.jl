@@ -109,6 +109,23 @@ function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::Abstr
     end
 end
 
+function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, nl::Int) where {Tt<:AbstractFloat, Tl<:Integer}
+    sums = zeros(eltype(traces), nl, size(traces, 2))
+    totals = zeros(UInt32, nl)
+    
+    @inbounds AK.foraxes(traces, 2) do j
+        for i in axes(traces, 1)
+            l_i = convert(Int32, labels[i]+1)
+            if j == 1
+                totals[l_i] += 1
+            end
+            sums[l_i, j] += traces[i, j]
+        end
+    end
+
+    return sums, totals
+end
+
 function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     @inbounds AK.foraxes(traces, 2) do j
         for i in axes(traces, 1)
@@ -394,25 +411,25 @@ function centered_sum_update_dagger!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, trac
     
     _sums = Dagger.@shard zeros(eltype(acc._sums), size(acc._sums))
     _totals = Dagger.@shard zeros(eltype(acc._totals), size(acc._totals))
+    fill!(acc._moments, 0)
+    _moments = Dagger.@shard acc._moments
 
     # (assuming that if traces and labels are DArrays then they are distributed amongst procs in ctx)
     @sync for slice in tiled_view(axes(traces, 1), (chunksize, ))
-        Dagger.@spawn label_wise_sum_ak_transposed!(traces[slice, :], labels[slice], _sums, _totals)
+        Dagger.@spawn label_wise_sum_ak_transposed!(view(traces, slice, :), view(labels, slice), acc.nl)
     end
     acc._sums .= .+(map(shard->fetch(shard), _sums)...)
     acc._totals .= .+(map(shard->fetch(shard), _totals)...)
 
     # find means
-    fill!(acc._moments, 0)
-    @. acc._moments[:, 1, :] = acc._sums / acc._totals
-    _moments = Dagger.@shard acc._moments
+    @. _moments[:, 1, :] = acc._sums / acc._totals
 
     # compute centered sums
     # The same process can be followed here as for label_wise_sum
     @sync for slice in tiled_view(axes(traces, 1), (chunksize, ))
-        Dagger.@spawn centered_sum_kern_ak_transposed!(_moments, traces[slice, :], labels[slice])
+        Dagger.@spawn centered_sum_kern_ak_transposed!(_moments, view(traces, slice, :), view(labels, slice))
     end
-    acc._moments[:, 2:end, :] .= (.+(map(shard->fetch(shard), _moments)...))[:, 2:end, :]
+    acc._moments .= (.+(map(shard->fetch(shard), _moments)...))
 
     # merge centered sum estimations
     init_ls = acc.totals .== 0
