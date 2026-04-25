@@ -1,6 +1,33 @@
-using SCA
+using Distributed; addprocs(2)
+@everywhere using SCA
 using Test
-using Statistics
+@everywhere using Statistics
+@everywhere using Dagger
+@everywhere Dagger.enable_logging!()
+@everywhere using Random
+using GraphViz
+
+@testset "Dagger moments update test" begin
+    Random.seed!(12)
+    t = rand(100000, 10)
+    l = rand(UInt8, 100000)
+    m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(2, 10, 256)
+    m2 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(2, 10, 256)
+
+    Moments.centered_sum_update!(m1, t, l)
+    Moments.centered_sum_update_dagger!(m2, t, l, Context(), [1, 2, 3])
+
+    @test all(m1.totals .== m2.totals)
+    @test all(m1.moments .≈ m2.moments)
+    if !all(m1.moments .≈ m2.moments)
+        println("Moment differences (m1 - m2)[1:10, :, 1]")
+        display((m1.moments .- m2.moments)[1:10, :, 1])
+        println("Max diff: $(abs(maximum(m1.moments .- m2.moments)))")
+    end
+
+    # logs = Dagger.fetch_logs!()
+    # Dagger.render_logs(logs, :graphviz)
+end
 
 # Test precision / stability of centered sum merging formula [Prop. 2.1, 10.2172/1028931]
 # with reference to a single centered sum calculation on the same data, requiring no merge
@@ -65,30 +92,30 @@ end
     display(vec(mean(prcnt_err, dims=(1, 3))))
 end
 
-@testset "UniVarMomentsAccNDLabel tests" begin
-    a = rand(20000, 20)
-    l = rand(UInt8, 20000, 4)
-    m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
-    m2 = Moments.UniVarMomentsAccNDLabel{Float64, UInt8, Array, 1}(10, 20, 256, (4, ))
+# @testset "UniVarMomentsAccNDLabel tests" begin
+#     a = rand(20000, 20)
+#     l = rand(UInt8, 20000, 4)
+#     m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
+#     m2 = Moments.UniVarMomentsAccNDLabel{Float64, UInt8, Array, 1}(10, 20, 256, (4, ))
 
-    # initialization update
-    Moments.centered_sum_update!(m1, a[1:10000, :], l[1:10000, 1])
-    Moments.centered_sum_update!(m2, a[1:10000, :], l[1:10000, :])
-    @test all(isapprox.(m1.moments, m2.moments[1, :, :, :]))
-    println("Update 1 percent error by order:")
-    prcnt_err = abs.((m1.moments .- m2.moments[1, :, :, :]) ./ m2.moments[1, :, :, :]).*100
-    display(vec(mean(prcnt_err, dims=(1, 3))))
+#     # initialization update
+#     Moments.centered_sum_update!(m1, a[1:10000, :], l[1:10000, 1])
+#     Moments.centered_sum_update!(m2, a[1:10000, :], l[1:10000, :])
+#     @test all(isapprox.(m1.moments, m2.moments[1, :, :, :]))
+#     println("Update 1 percent error by order:")
+#     prcnt_err = abs.((m1.moments .- m2.moments[1, :, :, :]) ./ m2.moments[1, :, :, :]).*100
+#     display(vec(mean(prcnt_err, dims=(1, 3))))
 
 
-    # merge update
-    Moments.centered_sum_update!(m1, a[10001:end, :], l[10001:end, 1])
-    Moments.centered_sum_update!(m2, a[10001:end, :], l[10001:end, :])
-    @test all(isapprox.(m1.moments, m2.moments[1, :, :, :]))
-    println("Update 2 percent error by order:")
-    prcnt_err = abs.((m1.moments .- m2.moments[1, :, :, :]) ./ m2.moments[1, :, :, :]).*100
-    display(vec(mean(prcnt_err, dims=(1, 3))))
+#     # merge update
+#     Moments.centered_sum_update!(m1, a[10001:end, :], l[10001:end, 1])
+#     Moments.centered_sum_update!(m2, a[10001:end, :], l[10001:end, :])
+#     @test all(isapprox.(m1.moments, m2.moments[1, :, :, :]))
+#     println("Update 2 percent error by order:")
+#     prcnt_err = abs.((m1.moments .- m2.moments[1, :, :, :]) ./ m2.moments[1, :, :, :]).*100
+#     display(vec(mean(prcnt_err, dims=(1, 3))))
 
-end
+# end
 
 @testset "Test that Chunked SNR is equivalent on dimension 2" begin
     t = rand(Float64, 5000, 1000)

@@ -392,11 +392,11 @@ end
 # Assume that the dataset has been split over the time axis between nodes already. Any distributed
 # parallelism added in this function should consider that.
 # State:
-#   totals are not always accurate, but more often than the moments
-#   rarely, moments are accurate. It makes me think its a scheduling issue.
+#   Currently its accurate. However, every time this is called theres a lot of overhead. It seems to mostly
+#   be coming from allocation of distributed arrays. Maybe I could create a new UniVarMomentsAcc struct that
+#   holds a `workers` array and pre-allocated distributed arrays. 
 function centered_sum_update_dagger!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}, ctx::Context, workers::Array{Int, 1}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    # I want to see if I can distribute and reduce each pass in the two pass estimation, so that
-    # I can have distributed parallelism without the numerical instability of merging estimations
+    workers_scope = Dagger.scope(workers=workers)
     
     @boundscheck begin
         checkbounds(acc._sums, acc.nl, size(traces, 2))
@@ -407,8 +407,9 @@ function centered_sum_update_dagger!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, trac
     # For each Proccessor (worker) in ctx.procs, return the set of ThreadProc / GPUDeviceProc it contains
     # sub_processors = Dagger.get_processors.(ctx.procs)
     
-    _sums = Dagger.@shard workers=workers zeros(eltype(acc._sums), size(acc._sums))
-    _totals = Dagger.@shard workers=workers zeros(eltype(acc._totals), size(acc._totals))
+    _sums = zeros(Blocks(1, size(acc._sums)...), eltype(acc._sums), size(workers, 1), size(acc._sums)...)
+    _totals = zeros(Blocks(1, size(acc._totals)...), eltype(acc._totals), size(workers, 1), size(acc._totals)...)
+    _moments = zeros(Blocks(1, size(acc._moments)...), eltype(acc._moments), size(workers, 1), size(acc._moments)...)
     fill!(acc._moments, 0)
 
     Dtraces = distribute(traces, Blocks(Int(ceil(size(traces, 1) / size(workers, 1))), size(traces, 2)), reshape(workers, size(workers, 1), 1))
@@ -416,20 +417,29 @@ function centered_sum_update_dagger!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, trac
 
     # first pass
     @sync for c in axes(workers, 1)
-        Dagger.@spawn label_wise_sum_ak_transposed!(Dtraces.chunks[c], Dlabels.chunks[c], _sums, _totals)
+        Dagger.@spawn scope=workers_scope label_wise_sum_ak_transposed!(Dtraces.chunks[c], Dlabels.chunks[c], Dagger.@spawn(dropdims(_sums.chunks[c], dims=1)), Dagger.@spawn(dropdims(_totals.chunks[c], dims=1)))
     end
-    acc._sums .= .+(map(shard->fetch(Dagger.@spawn copy(shard)), _sums)...)
-    acc._totals .= .+(map(shard->fetch(Dagger.@spawn copy(shard)), _totals)...)
+    # acc._sums .= .+(map(shard->fetch(Dagger.@spawn copy(shard)), _sums)...)  # not the same each run
+    # acc._totals .= .+(map(shard->fetch(Dagger.@spawn copy(shard)), _totals)...)  # not the same each run
+    acc._sums .= dropdims(.+(fetch.(_sums.chunks)...), dims=1)  # same for each run
+    acc._totals .= dropdims(.+(fetch.(_totals.chunks)...), dims=1)  # same for each run
+    println("finished 1st pass")
 
     # find means
     @. acc._moments[:, 1, :] = acc._sums / acc._totals
-    _moments = Dagger.@shard workers=workers copy(acc._moments)  # push mean to workers
+    @sync for c in axes(workers, 1)        
+        # Sometimes throws a concurrency violation due to concurrent resizing of vector?
+        @assert size(_moments[c, :, 1, :]) == size(view(acc._moments, :, 1, :))
+        Dagger.@spawn _moments[c, :, 1, :] = view(acc._moments, :, 1, :)
+    end
+    println("finished copying _moments")
 
     # second pass
     @sync for c in axes(workers, 1)
-        Dagger.@spawn centered_sum_kern_ak_transposed!(_moments, Dtraces.chunks[c], Dlabels.chunks[c])
+        Dagger.@spawn scope=workers_scope centered_sum_kern_ak_transposed!(Dagger.@spawn(dropdims(_moments.chunks[c], dims=1)), Dtraces.chunks[c], Dlabels.chunks[c])
     end
-    acc._moments[:, 2:end, :] .= (.+(map(shard->fetch(Dagger.@spawn copy(shard)), _moments)...))[:, 2:end, :]
+    acc._moments[:, 2:end, :] .= dropdims(.+(fetch.(_moments.chunks)...), dims=1)[:, 2:end, :]
+    println("finished 2nd pass")
 
     # merge centered sum estimations
     init_ls = acc.totals .== 0
@@ -441,6 +451,7 @@ function centered_sum_update_dagger!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, trac
     if any(update_ls)
         throw(ErrorException("Not supposed to happen!"))
     end
+    println("finished merge")
     return nothing
 end
 
