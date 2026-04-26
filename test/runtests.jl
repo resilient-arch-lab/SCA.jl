@@ -3,7 +3,10 @@ using Distributed; addprocs(2)
 using Test
 @everywhere using Statistics
 @everywhere using Dagger
-@everywhere Dagger.enable_logging!()
+@everywhere Dagger.enable_logging!(tasknames = true,
+                       taskfuncnames = true,
+                       taskdeps = true,
+                       taskargs = true)
 @everywhere using Random
 using GraphViz
 
@@ -18,6 +21,13 @@ using GraphViz
     Moments.centered_sum_update_dagger!(m2, t, l, Context(), [1, 2, 3])
 
     @test all(m1.totals .== m2.totals)
+    if !all(m1.totals .== m2.totals)
+        println("totals 1")
+        display(m1.totals)
+        println("totals 2")
+        display(m2.totals)
+    end
+
     @test all(m1.moments .≈ m2.moments)
     if !all(m1.moments .≈ m2.moments)
         println("Moment differences (m1 - m2)[1:10, :, 1]")
