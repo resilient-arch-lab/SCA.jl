@@ -74,6 +74,32 @@ struct UniVarMomentsAccDagger{Tt<:AbstractFloat, Tl<:Integer}
     end
 end
 
+struct UniVarMomentsAccDagger2{Tt<:AbstractFloat, Tl<:Integer}
+    workers::Array{Int, 2}
+    totals::Array{UInt32, 1}
+    moments::Array{Tt, 3}
+    order::UInt
+    ns::UInt
+    nl::UInt
+    _totals::DArray{UInt32, 3}  # size of dim1 = nworkers
+    _moments::DArray{Tt, 4}  # size of dim1 = nworkers
+    _sums::DArray{Tt, 3}  # size of dim1 = nworkers
+
+    function UniVarMomentsAccDagger2{Tt, Tl}(workers, order, ns, nl, chunksize) where {Tt<:AbstractFloat, Tl<:Integer}
+        totals = zeros(UInt32, nl)
+        moments = zeros(Tt, nl, order, ns)
+        
+        # This mapping is like almost right but not quite 
+        _totals = zeros(Blocks(1, 1, size(totals)...), UInt32, size(workers)..., size(totals)...)
+        _moments = zeros(Blocks(1, size(moments)[1:2]..., chunksize[2]), Tt, size(workers, 1), size(moments)...)
+        _sums = zeros(Blocks(1, nl, chunksize[2]), Tt, size(workers, 1), nl, ns)
+
+        println("Initialized UniVarMomentsAccDagger2")
+
+        new(workers, totals, moments, order, ns, nl, _totals, _moments, _sums)
+    end
+end
+
 # right now this is slower than running a UniVarMomentsAccs for each label element
 struct UniVarMomentsAccNDLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
     totals::Tarray  # Tarray is a typevar, which you can't parameterize directly 
@@ -484,6 +510,60 @@ function centered_sum_update!(acc::UniVarMomentsAccDagger{Tt, Tl}, traces::DArra
             throw(ErrorException("Not supposed to happen!"))
         end
         println("finished merge")
+    end
+    return nothing
+end
+
+function centered_sum_update!(acc::UniVarMomentsAccDagger2{Tt, Tl}, traces::DArray{Tt, 2}, labels::DArray{Tl, 1}) where {Tt<:AbstractFloat, Tl<:Integer}  
+    workers_scope = Dagger.scope(workers=acc.workers, thread=1)  # I should be using theread=1 to not mess up the internal multithreading on each worker
+    
+    Dagger.spawn_datadeps() do
+        Dagger.@spawn fill!(Out(acc._totals), 0)
+        Dagger.@spawn fill!(Out(acc._moments), 0)
+        Dagger.@spawn fill!(Out(acc._sums), 0)
+        println("prepared distributed intermediate arrays")
+
+        for slice ∈ axes(traces.chunks, 2)
+            for batch ∈ axes(traces.chunks, 1)
+                Dagger.@spawn scope=workers_scope label_wise_sum_ak_transposed!(
+                    In(traces.chunks[batch, slice]), In(labels.chunks[batch]), 
+                    InOut(acc._sums.chunks[batch, 1, slice]), InOut(acc._totals.chunks[batch, slice, 1])
+                )
+            end
+            # reduce intermediate values
+            Dagger.@spawn scope=workers_scope sum!(InOut(acc._sums.chunks[1, 1, slice]), In(acc._sums.chunks[:, 1, slice])) 
+        end
+        Dagger.@spawn scope=workers_scope sum!(InOut(acc._totals.chunks[1, 1, 1]), In(acc._sums.chunks[:, 1, 1]))
+        println("finished 1st pass")
+
+        # @. acc._moments[:, 1, :] = acc._sums / acc._totals
+        # for slice ∈ axes(traces.chunks, 2)
+        #     slice_idxs = Dagger.indexes(traces.subdomains[1, slice])[2]
+        #     Dagger.@spawn scope=Dagger.scope(worker=acc.worker_mapping[slice]) copyto!(Out(acc._moments_shard), In(acc._moments[:, :, slice_idxs]))
+        # end
+        # println("calculated mean and distributed result")
+
+        # for slice ∈ axes(traces.chunks, 2)
+        #     slice_idxs = Dagger.indexes(traces.subdomains[1, slice])[2]
+        #     for batch ∈ axes(traces.chunks, 1)
+        #         Dagger.@spawn scope=workers_scope centered_sum_kern_ak_transposed!(InOut(acc._moments_shard), In(traces.chunks[slice, batch]), In(labels.chunks[batch]))
+        #     end
+        #     _moments_to_update = view(acc._moments, :, 2:size(acc._moments, 2), slice_idxs)
+        #     _moments_update = Dagger.@spawn scope=Dagger.scope(worker=acc.worker_mapping[slice]) view(acc._moments_shard)  # this needs an In(), but that makes it error
+        #     Dagger.@spawn scope=Dagger.scope(worker=acc.worker_mapping[slice]) copyto!(InOut(_moments_to_update), In(_moments_update))
+        # end
+        # println("finished 2nd pass")
+        
+        # init_ls = acc.totals .== 0
+        # update_ls = acc.totals .!= 0
+        # if any(init_ls)
+        #     @inbounds acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
+        #     @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
+        # end
+        # if any(update_ls)
+        #     throw(ErrorException("Not supposed to happen!"))
+        # end
+        # println("finished merge")
     end
     return nothing
 end

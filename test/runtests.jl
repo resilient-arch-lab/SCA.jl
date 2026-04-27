@@ -18,12 +18,14 @@ using GraphViz
     td = distribute(t, Blocks(50000, 5), reshape(workers, size(workers, 1), 1))
     ld = distribute(l, Blocks(50000), workers)
     m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(2, 10, 256)
-    m2 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(2, 10, 256)
-    m3 = Moments.UniVarMomentsAccDagger{Float64, UInt8}(workers, 2, 10, 256, (50000, 5))
+    # m2 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(2, 10, 256)
+    # m3 = Moments.UniVarMomentsAccDagger{Float64, UInt8}(workers, 2, 10, 256, (50000, 5))
+    m4 = Moments.UniVarMomentsAccDagger2{Float64, UInt8}([1 2; 3 1], 2, 10, 256, (50000, 5))
 
     Moments.centered_sum_update!(m1, t, l)
     # Moments.centered_sum_update_dagger!(m2, t, l, Context(), workers)
-    Moments.centered_sum_update!(m3, td, ld)
+    # Moments.centered_sum_update!(m3, td, ld)
+    Moments.centered_sum_update!(m4, td, ld)
 
     # @test all(m1.totals .== m2.totals)
     # if !all(m1.totals .== m2.totals)
@@ -40,19 +42,34 @@ using GraphViz
     #     println("Max diff: $(abs(maximum(m1.moments .- m2.moments)))")
     # end
 
-    @test all(m1.totals .== m3.totals)
-    if !all(m1.totals .== m3.totals)
+    # @test all(m1.totals .== m3.totals)
+    # if !all(m1.totals .== m3.totals)
+    #     println("totals 1")
+    #     display(m1.totals)
+    #     println("totals 3")
+    #     display(m3.totals)
+    # end
+
+    # @test all(m1.moments .≈ m3.moments)
+    # if !all(m1.moments .≈ m3.moments)
+    #     println("Moment differences (m1 - m3)[1:10, :, 1]")
+    #     display((m1.moments .- m3.moments)[1:10, :, 1])
+    #     println("Max diff: $(abs(maximum(m1.moments .- m3.moments)))")
+    # end
+
+    @test all(m1.totals .== m4.totals)
+    if !all(m1.totals .== m4.totals)
         println("totals 1")
         display(m1.totals)
-        println("totals 3")
-        display(m3.totals)
+        println("totals 4")
+        display(m4.totals)
     end
 
-    @test all(m1.moments .≈ m3.moments)
-    if !all(m1.moments .≈ m3.moments)
-        println("Moment differences (m1 - m3)[1:10, :, 1]")
-        display((m1.moments .- m3.moments)[1:10, :, 1])
-        println("Max diff: $(abs(maximum(m1.moments .- m3.moments)))")
+    @test all(m1.moments .≈ m4.moments)
+    if !all(m1.moments .≈ m4.moments)
+        println("Moment differences (m1 - m4)[1:10, :, 1]")
+        display((m1.moments .- m4.moments)[1:10, :, 1])
+        println("Max diff: $(abs(maximum(m1.moments .- m4.moments)))")
     end
 
     # logs = Dagger.fetch_logs!()
