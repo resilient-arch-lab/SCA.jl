@@ -10,29 +10,49 @@ using Test
 @everywhere using Random
 using GraphViz
 
-@testset "Dagger moments update test" begin
+@testset "Dagger moments update test 1" begin
+    workers = [1, 2, 3]
     Random.seed!(12)
     t = rand(100000, 10)
     l = rand(UInt8, 100000)
+    td = distribute(t, Blocks(50000, 5), reshape(workers, size(workers, 1), 1))
+    ld = distribute(l, Blocks(50000), workers)
     m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(2, 10, 256)
     m2 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(2, 10, 256)
+    m3 = Moments.UniVarMomentsAccDagger{Float64, UInt8}(workers, 2, 10, 256, (50000, 5))
 
     Moments.centered_sum_update!(m1, t, l)
-    Moments.centered_sum_update_dagger!(m2, t, l, Context(), [1, 2, 3])
+    # Moments.centered_sum_update_dagger!(m2, t, l, Context(), workers)
+    Moments.centered_sum_update!(m3, td, ld)
 
-    @test all(m1.totals .== m2.totals)
-    if !all(m1.totals .== m2.totals)
+    # @test all(m1.totals .== m2.totals)
+    # if !all(m1.totals .== m2.totals)
+    #     println("totals 1")
+    #     display(m1.totals)
+    #     println("totals 2")
+    #     display(m2.totals)
+    # end
+
+    # @test all(m1.moments .≈ m2.moments)
+    # if !all(m1.moments .≈ m2.moments)
+    #     println("Moment differences (m1 - m2)[1:10, :, 1]")
+    #     display((m1.moments .- m2.moments)[1:10, :, 1])
+    #     println("Max diff: $(abs(maximum(m1.moments .- m2.moments)))")
+    # end
+
+    @test all(m1.totals .== m3.totals)
+    if !all(m1.totals .== m3.totals)
         println("totals 1")
         display(m1.totals)
-        println("totals 2")
-        display(m2.totals)
+        println("totals 3")
+        display(m3.totals)
     end
 
-    @test all(m1.moments .≈ m2.moments)
-    if !all(m1.moments .≈ m2.moments)
-        println("Moment differences (m1 - m2)[1:10, :, 1]")
-        display((m1.moments .- m2.moments)[1:10, :, 1])
-        println("Max diff: $(abs(maximum(m1.moments .- m2.moments)))")
+    @test all(m1.moments .≈ m3.moments)
+    if !all(m1.moments .≈ m3.moments)
+        println("Moment differences (m1 - m3)[1:10, :, 1]")
+        display((m1.moments .- m3.moments)[1:10, :, 1])
+        println("Max diff: $(abs(maximum(m1.moments .- m3.moments)))")
     end
 
     # logs = Dagger.fetch_logs!()

@@ -41,25 +41,36 @@ end
 
 struct UniVarMomentsAccDagger{Tt<:AbstractFloat, Tl<:Integer}
     workers::Array{Int, 1}
-    totals::DArray
-    moments::DArray
+    totals::Array
+    moments::Array
     order::UInt
     ns::UInt
     nl::UInt
     chunksize::NTuple{2, Int}
-    _totals::DArray
-    _moments::DArray
-    _sums::DArray
+    _totals::Array
+    _moments::Array
+    _sums::Array
+    _totals_shard::Dagger.Shard
+    _moments_shard::Dagger.Shard
+    _sums_shard::Dagger.Shard
+    worker_mapping::Dict{Int, Int}
+
 
     function UniVarMomentsAccDagger{Tt, Tl}(workers, order, ns, nl, chunksize) where {Tt<:AbstractFloat, Tl<:Integer}
         nworkers = size(workers, 1)
-        totals = zeros(Blocks(1, nl), UInt32, nworkers, nl)
-        moments = zeros(Blocks(1, nl, order, ns), Tt, nworkers, nl, order, ns)
+        totals = zeros(UInt32, nl)
+        moments = zeros(Tt, nl, order, ns)
 
-        _totals = fill!(similar(totals), 0)
-        _moments = fill!(similar(moments), 0)
-        _sums = zeros(Blocks(1, nl, ns), Tt, nworkers, nl, ns)
-        new(workers, totals, moments, order, ns, nl, _totals, _moments, _sums, chunksize)
+        _totals = similar(totals)
+        _moments = similar(moments)
+        _sums = zeros(Tt, nl, ns)
+        _totals_shard = Dagger.@shard workers=workers similar(totals)
+        _moments_shard = Dagger.@shard workers=workers similar(moments, size(moments)[1:2]..., chunksize[2])
+        _sums_shard = Dagger.@shard workers=workers zeros(Tt, nl, chunksize[2])
+
+        worker_mapping = Dict(s => w for (s, w) ∈ zip(1:nworkers, workers))
+
+        new(workers, totals, moments, order, ns, nl, chunksize, _totals, _moments, _sums, _totals_shard, _moments_shard, _sums_shard, worker_mapping)
     end
 end
 
@@ -413,50 +424,67 @@ function centered_sum_update!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}, 
     end
 end
 
+
+# There's the potential for shards to be larger than the slice they're correlated with
 function centered_sum_update!(acc::UniVarMomentsAccDagger{Tt, Tl}, traces::DArray{Tt, 2}, labels::DArray{Tl, 1}) where {Tt<:AbstractFloat, Tl<:Integer}
     # @boundscheck begin
     #     checkbounds(acc._sums, acc.nl, size(traces, 2))
     #     checkbounds(acc._moments, acc.nl, acc.order, size(traces, 2))
     #     checkbounds(labels, size(traces, 1))
     # end
-    workers_scope = Dagger.scope(workers=workers, thread=1)  # I should be using theread=1 to not mess up the internal multithreading on each worker
-
-    # first pass
-    Dagger.with_options(;scope=workers_scope) do
-        @sync for c in axes(acc.workers, 1)
-            Dagger.@spawn label_wise_sum_ak_transposed!(Dtraces.chunks[c], Dlabels.chunks[c], Dagger.@spawn(dropdims(acc._sums.chunks[c], dims=1)), Dagger.@spawn(dropdims(_totals.chunks[c], dims=1)))
+    
+    workers_scope = Dagger.scope(workers=acc.workers, thread=1)  # I should be using theread=1 to not mess up the internal multithreading on each worker
+    lead_scope = Dagger.scope(worker=acc.workers[1], thread=1)
+    lead_proc = OSProc(acc.workers[1])
+    
+    Dagger.spawn_datadeps() do
+        for w ∈ acc.workers
+            Dagger.@spawn scope=Dagger.scope(worker=w) fill!(InOut(acc._sums_shard), 0)
+            # Dagger.@spawn scope=Dagger.scope(worker=w) fill!(InOut(acc._moments_shard), 0)
+            Dagger.@spawn scope=Dagger.scope(worker=w) fill!(InOut(acc._totals_shard), 0)
+            fill!(acc._moments, 0)
         end
-        acc._sums .= dropdims(.+(fetch.(_sums.chunks)...), dims=1)  # same for each run
-        acc._totals .= dropdims(.+(fetch.(_totals.chunks)...), dims=1)  # same for each run
-    end
-    println("finished 1st pass")
+        println("prepared shards")
+        
+        for slice ∈ axes(traces.chunks, 2)  # I don't think this parallelizes such that multiple workers can process the same slice
+            slice_idxs = Dagger.indexes(traces.subdomains[1, slice])[2]
+            for batch ∈ axes(traces.chunks, 1)
+                Dagger.@spawn scope=workers_scope label_wise_sum_ak_transposed!(In(traces.chunks[slice, batch]), In(labels.chunks[batch]), InOut(acc._sums_shard), InOut(acc._totals_shard))
+            end
+            Dagger.@spawn scope=Dagger.scope(worker=acc.worker_mapping[slice]) copyto!(InOut(view(acc._sums, :, slice_idxs)), In(acc._sums_shard))
+        end
+        Dagger.@spawn scope=Dagger.scope(worker=acc.worker_mapping[1]) copyto!(InOut(acc._totals), In(acc._totals_shard))
+        println("finished 1st pass")
 
-    # find means
-    @. acc._moments[:, 1, :] = acc._sums / acc._totals
-    @sync for c in axes(acc.workers, 1)        
-        @assert size(_moments[c, :, 1, :]) == size(view(acc._moments, :, 1, :))
-        Dagger.@spawn _moments[c, :, 1, :] = view(acc._moments, :, 1, :)
-    end
-    println("finished copying _moments")
+        @. acc._moments[:, 1, :] = acc._sums / acc._totals
+        for slice ∈ axes(traces.chunks, 2)
+            slice_idxs = Dagger.indexes(traces.subdomains[1, slice])[2]
+            Dagger.@spawn scope=Dagger.scope(worker=acc.worker_mapping[slice]) copyto!(Out(acc._moments_shard), In(acc._moments[:, :, slice_idxs]))
+        end
+        println("calculated mean and distributed result")
 
-    # second pass
-    @sync for c in axes(acc.workers, 1)
-        Dagger.@spawn scope=workers_scope centered_sum_kern_ak_transposed!(Dagger.@spawn(dropdims(_moments.chunks[c], dims=1)), Dtraces.chunks[c], Dlabels.chunks[c])
+        for slice ∈ axes(traces.chunks, 2)
+            slice_idxs = Dagger.indexes(traces.subdomains[1, slice])[2]
+            for batch ∈ axes(traces.chunks, 1)
+                Dagger.@spawn scope=workers_scope centered_sum_kern_ak_transposed!(InOut(acc._moments_shard), In(traces.chunks[slice, batch]), In(labels.chunks[batch]))
+            end
+            _moments_to_update = view(acc._moments, :, 2:size(acc._moments, 2), slice_idxs)
+            _moments_update = Dagger.@spawn scope=Dagger.scope(worker=acc.worker_mapping[slice]) view(acc._moments_shard)  # this needs an In(), but that makes it error
+            Dagger.@spawn scope=Dagger.scope(worker=acc.worker_mapping[slice]) copyto!(InOut(_moments_to_update), In(_moments_update))
+        end
+        println("finished 2nd pass")
+        
+        init_ls = acc.totals .== 0
+        update_ls = acc.totals .!= 0
+        if any(init_ls)
+            @inbounds acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
+            @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
+        end
+        if any(update_ls)
+            throw(ErrorException("Not supposed to happen!"))
+        end
+        println("finished merge")
     end
-    acc._moments[:, 2:end, :] .= dropdims(.+(fetch.(_moments.chunks)...), dims=1)[:, 2:end, :]
-    println("finished 2nd pass")
-
-    # merge centered sum estimations
-    init_ls = acc.totals .== 0
-    update_ls = acc.totals .!= 0
-    if any(init_ls)
-        @inbounds acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
-        @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
-    end
-    if any(update_ls)
-        throw(ErrorException("Not supposed to happen!"))
-    end
-    println("finished merge")
     return nothing
 end
 
