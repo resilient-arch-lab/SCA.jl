@@ -47,14 +47,13 @@ struct UniVarMomentsAccDagger{Tt<:AbstractFloat, Tl<:Integer}
     ns::UInt
     nl::UInt
     chunksize::NTuple{2, Int}
-    _totals::Array
-    _moments::Array
-    _sums::Array
-    _totals_shard::Dagger.Shard
-    _moments_shard::Dagger.Shard
-    _sums_shard::Dagger.Shard
+    _totals::Array  # combined intermediate result 
+    _moments::Array  # combined intermediate result 
+    _sums::Array  # combined intermediate result 
+    _totals_shard::Dagger.Shard  # distributed pre-reduction intermediate result arrays
+    _moments_shard::Dagger.Shard  # distributed pre-reduction intermediate result arrays
+    _sums_shard::Dagger.Shard  # distributed pre-reduction intermediate result arrays
     worker_mapping::Dict{Int, Int}
-
 
     function UniVarMomentsAccDagger{Tt, Tl}(workers, order, ns, nl, chunksize) where {Tt<:AbstractFloat, Tl<:Integer}
         nworkers = size(workers, 1)
@@ -75,28 +74,32 @@ struct UniVarMomentsAccDagger{Tt<:AbstractFloat, Tl<:Integer}
 end
 
 struct UniVarMomentsAccDagger2{Tt<:AbstractFloat, Tl<:Integer}
-    workers::Array{Int, 2}
-    totals::Array{UInt32, 1}
-    moments::Array{Tt, 3}
+    workers::Array{Int, 1}
+    totals::Array
+    moments::Array
     order::UInt
     ns::UInt
     nl::UInt
-    _totals::DArray{UInt32, 3}  # size of dim1 = nworkers
-    _moments::DArray{Tt, 4}  # size of dim1 = nworkers
-    _sums::DArray{Tt, 3}  # size of dim1 = nworkers
+    chunksize::Int
+    _totals::Array  # reduced intermediate result
+    _moments::Array  # reduced intermediate result
+    _sums::Array  # reduced intermediate result
+    _totals_shard::Dagger.Shard  # distributed pre-reduction intermediate result
+    _moments_shard::Dagger.Shard  # distributed pre-reduction intermediate result
+    _sums_shard::Dagger.Shard  # distributed pre-reduction intermediate result
 
     function UniVarMomentsAccDagger2{Tt, Tl}(workers, order, ns, nl, chunksize) where {Tt<:AbstractFloat, Tl<:Integer}
         totals = zeros(UInt32, nl)
         moments = zeros(Tt, nl, order, ns)
         
-        # This mapping is like almost right but not quite 
-        _totals = zeros(Blocks(1, 1, size(totals)...), UInt32, size(workers)..., size(totals)...)
-        _moments = zeros(Blocks(1, size(moments)[1:2]..., chunksize[2]), Tt, size(workers, 1), size(moments)...)
-        _sums = zeros(Blocks(1, nl, chunksize[2]), Tt, size(workers, 1), nl, ns)
+        _totals = similar(totals)
+        _moments = similar(moments)
+        _sums = zeros(Tt, nl, ns)
+        _totals_shard = Dagger.@shard workers=workers similar(totals)
+        _moments_shard = Dagger.@shard workers=workers similar(moments)
+        _sums_shard = Dagger.@shard workers=workers similar(_sums)
 
-        println("Initialized UniVarMomentsAccDagger2")
-
-        new(workers, totals, moments, order, ns, nl, _totals, _moments, _sums)
+        new(workers, totals, moments, order, ns, nl, chunksize, _totals, _moments, _sums, _totals_shard, _moments_shard, _sums_shard)
     end
 end
 
@@ -450,7 +453,6 @@ function centered_sum_update!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}, 
     end
 end
 
-
 # There's the potential for shards to be larger than the slice they're correlated with
 function centered_sum_update!(acc::UniVarMomentsAccDagger{Tt, Tl}, traces::DArray{Tt, 2}, labels::DArray{Tl, 1}) where {Tt<:AbstractFloat, Tl<:Integer}
     # @boundscheck begin
@@ -514,26 +516,28 @@ function centered_sum_update!(acc::UniVarMomentsAccDagger{Tt, Tl}, traces::DArra
     return nothing
 end
 
-function centered_sum_update!(acc::UniVarMomentsAccDagger2{Tt, Tl}, traces::DArray{Tt, 2}, labels::DArray{Tl, 1}) where {Tt<:AbstractFloat, Tl<:Integer}  
+# Now we assume that each acc struct only has one slice, and that traces / labels are distributed over dim 1 only
+function centered_sum_update!(acc::UniVarMomentsAccDagger2{Tt, Tl}, traces::DArray{Tt, 2}, labels::DArray{Tl, 1}) where {Tt<:AbstractFloat, Tl<:Integer}
     workers_scope = Dagger.scope(workers=acc.workers, thread=1)  # I should be using theread=1 to not mess up the internal multithreading on each worker
     
     Dagger.spawn_datadeps() do
-        Dagger.@spawn fill!(Out(acc._totals), 0)
-        Dagger.@spawn fill!(Out(acc._moments), 0)
-        Dagger.@spawn fill!(Out(acc._sums), 0)
-        println("prepared distributed intermediate arrays")
-
-        for slice ∈ axes(traces.chunks, 2)
-            for batch ∈ axes(traces.chunks, 1)
-                Dagger.@spawn scope=workers_scope label_wise_sum_ak_transposed!(
-                    In(traces.chunks[batch, slice]), In(labels.chunks[batch]), 
-                    InOut(acc._sums.chunks[batch, 1, slice]), InOut(acc._totals.chunks[batch, slice, 1])
-                )
-            end
-            # reduce intermediate values
-            Dagger.@spawn scope=workers_scope sum!(InOut(acc._sums.chunks[1, 1, slice]), In(acc._sums.chunks[:, 1, slice])) 
+        for w ∈ acc.workers
+            Dagger.@spawn scope=Dagger.scope(worker=w) fill!(Out(acc._sums_shard), 0)
+            Dagger.@spawn scope=Dagger.scope(worker=w) fill!(Out(acc._totals_shard), 0)
+            fill!(acc._moments, 0)
         end
-        Dagger.@spawn scope=workers_scope sum!(InOut(acc._totals.chunks[1, 1, 1]), In(acc._sums.chunks[:, 1, 1]))
+        println("prepared shards")
+        
+        for batch ∈ axes(traces.chunks, 1)
+            Dagger.@spawn scope=workers_scope label_wise_sum_ak_transposed!(In(traces.chunks[batch]), In(labels.chunks[batch]), InOut(acc._sums_shard), InOut(acc._totals_shard))
+        end
+
+        for c in acc._sums_shard  # this worked in REPL, but doesn't seem to here...
+            Dagger.@spawn scope=workers_scope copyto!(InOut(acc._sums), Dagger.@spawn(+(InOut(acc._sums), In(c))))
+        end
+        for c in acc._totals_shard
+            Dagger.@spawn scope=workers_scope copyto!(InOut(acc._totals), Dagger.@spawn(+(InOut(acc._totals), In(c))))
+        end
         println("finished 1st pass")
 
         # @. acc._moments[:, 1, :] = acc._sums / acc._totals
@@ -563,8 +567,8 @@ function centered_sum_update!(acc::UniVarMomentsAccDagger2{Tt, Tl}, traces::DArr
         # if any(update_ls)
         #     throw(ErrorException("Not supposed to happen!"))
         # end
-        # println("finished merge")
     end
+    println("finished merge")
     return nothing
 end
 
