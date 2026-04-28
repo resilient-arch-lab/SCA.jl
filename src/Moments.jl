@@ -517,57 +517,89 @@ function centered_sum_update!(acc::UniVarMomentsAccDagger{Tt, Tl}, traces::DArra
 end
 
 # Now we assume that each acc struct only has one slice, and that traces / labels are distributed over dim 1 only
+# Shards dont work with datadeps...
 function centered_sum_update!(acc::UniVarMomentsAccDagger2{Tt, Tl}, traces::DArray{Tt, 2}, labels::DArray{Tl, 1}) where {Tt<:AbstractFloat, Tl<:Integer}
     workers_scope = Dagger.scope(workers=acc.workers, thread=1)  # I should be using theread=1 to not mess up the internal multithreading on each worker
-    
-    Dagger.spawn_datadeps() do
-        for w ∈ acc.workers
-            Dagger.@spawn scope=Dagger.scope(worker=w) fill!(Out(acc._sums_shard), 0)
-            Dagger.@spawn scope=Dagger.scope(worker=w) fill!(Out(acc._totals_shard), 0)
-            fill!(acc._moments, 0)
-        end
-        println("prepared shards")
-        
-        for batch ∈ axes(traces.chunks, 1)
-            Dagger.@spawn scope=workers_scope label_wise_sum_ak_transposed!(In(traces.chunks[batch]), In(labels.chunks[batch]), InOut(acc._sums_shard), InOut(acc._totals_shard))
-        end
+    @sync for w ∈ acc.workers
+        Dagger.@spawn scope=Dagger.scope(worker=w) fill!(acc._sums_shard, 0)
+        Dagger.@spawn scope=Dagger.scope(worker=w) fill!(acc._totals_shard, 0)
+    end
+    wait(Dagger.@spawn fill!(acc._moments, 0))
+    println("prepared shards")
 
-        for c in acc._sums_shard  # this worked in REPL, but doesn't seem to here...
-            Dagger.@spawn scope=workers_scope copyto!(InOut(acc._sums), Dagger.@spawn(+(InOut(acc._sums), In(c))))
-        end
-        for c in acc._totals_shard
-            Dagger.@spawn scope=workers_scope copyto!(InOut(acc._totals), Dagger.@spawn(+(InOut(acc._totals), In(c))))
-        end
+    @sync for batch ∈ axes(traces.chunks, 1)
+        Dagger.@spawn label_wise_sum_ak_transposed!(traces.chunks[batch], labels.chunks[batch], acc._sums_shard, acc._totals_shard)
+    end
+
+    Dagger.spawn_datadeps() do
+        Dagger.@spawn broadcast!(+, Out(acc._sums), In.(acc._sums_shard)...)  # reduce distributed intermediate results
+        Dagger.@spawn broadcast!(+, Out(acc._totals), In.(acc._totals_shard)...)  # reduce distributed intermediate results
         println("finished 1st pass")
 
-        # @. acc._moments[:, 1, :] = acc._sums / acc._totals
-        # for slice ∈ axes(traces.chunks, 2)
-        #     slice_idxs = Dagger.indexes(traces.subdomains[1, slice])[2]
-        #     Dagger.@spawn scope=Dagger.scope(worker=acc.worker_mapping[slice]) copyto!(Out(acc._moments_shard), In(acc._moments[:, :, slice_idxs]))
-        # end
-        # println("calculated mean and distributed result")
-
-        # for slice ∈ axes(traces.chunks, 2)
-        #     slice_idxs = Dagger.indexes(traces.subdomains[1, slice])[2]
-        #     for batch ∈ axes(traces.chunks, 1)
-        #         Dagger.@spawn scope=workers_scope centered_sum_kern_ak_transposed!(InOut(acc._moments_shard), In(traces.chunks[slice, batch]), In(labels.chunks[batch]))
-        #     end
-        #     _moments_to_update = view(acc._moments, :, 2:size(acc._moments, 2), slice_idxs)
-        #     _moments_update = Dagger.@spawn scope=Dagger.scope(worker=acc.worker_mapping[slice]) view(acc._moments_shard)  # this needs an In(), but that makes it error
-        #     Dagger.@spawn scope=Dagger.scope(worker=acc.worker_mapping[slice]) copyto!(InOut(_moments_to_update), In(_moments_update))
-        # end
-        # println("finished 2nd pass")
-        
-        # init_ls = acc.totals .== 0
-        # update_ls = acc.totals .!= 0
-        # if any(init_ls)
-        #     @inbounds acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
-        #     @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
-        # end
-        # if any(update_ls)
-        #     throw(ErrorException("Not supposed to happen!"))
-        # end
+        Dagger.@spawn broadcast!(/, Out(view(acc._moments, :, 1, :)), In(acc._sums), In(acc._totals))
+        # Dagger.@spawn copyto!.(Out.(acc._moments_shard), In(acc._moments))
+        println("calculated means")
     end
+
+    @sync for batch ∈ axes(traces.chunks, 1)
+        Dagger.@spawn centered_sum_kern_ak_transposed!(InOut(acc._moments_shard), traces.chunks[batch], labels.chunks[batch])
+    end
+    println("finished pass 2")
+
+    wait(Dagger.@spawn broadcast!(+, view(acc._moments, :, 2:size(acc._moments, 2), :), view.(acc._moments_shard, :, 2:size(acc._moments, 2), :)...))
+
+    init_ls = acc.totals .== 0
+    update_ls = acc.totals .!= 0
+    if any(init_ls)
+        @inbounds acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
+        @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
+    end
+    if any(update_ls)
+        throw(ErrorException("Not supposed to happen!"))
+    end
+    # Dagger.spawn_datadeps() do
+    #     # for w ∈ acc.workers
+    #     #     Dagger.@spawn scope=Dagger.scope(worker=w) fill!(Out(acc._sums_shard), 0)
+    #     #     Dagger.@spawn scope=Dagger.scope(worker=w) fill!(Out(acc._totals_shard), 0)
+    #     # end
+
+    #     # println("prepared shards")
+        
+    #     for batch ∈ axes(traces.chunks, 1)
+    #         # Dagger.@spawn label_wise_sum_ak_transposed!(In(traces.chunks[batch]), In(labels.chunks[batch]), InOut(acc._sums_shard), InOut(acc._totals_shard))
+    #     end
+    #     Dagger.@spawn broadcast!(+, Out(acc._sums), In.(acc._sums_shard)...)  # reduce distributed intermediate results
+    #     Dagger.@spawn broadcast!(+, Out(acc._totals), In.(acc._totals_shard)...)  # reduce distributed intermediate results
+    #     println("finished 1st pass")
+
+    #     # @. acc._moments[:, 1, :] = acc._sums / acc._totals
+    #     # for slice ∈ axes(traces.chunks, 2)
+    #     #     slice_idxs = Dagger.indexes(traces.subdomains[1, slice])[2]
+    #     #     Dagger.@spawn scope=Dagger.scope(worker=acc.worker_mapping[slice]) copyto!(Out(acc._moments_shard), In(acc._moments[:, :, slice_idxs]))
+    #     # end
+    #     # println("calculated mean and distributed result")
+
+    #     # for slice ∈ axes(traces.chunks, 2)
+    #     #     slice_idxs = Dagger.indexes(traces.subdomains[1, slice])[2]
+    #     #     for batch ∈ axes(traces.chunks, 1)
+    #     #         Dagger.@spawn scope=workers_scope centered_sum_kern_ak_transposed!(InOut(acc._moments_shard), In(traces.chunks[slice, batch]), In(labels.chunks[batch]))
+    #     #     end
+    #     #     _moments_to_update = view(acc._moments, :, 2:size(acc._moments, 2), slice_idxs)
+    #     #     _moments_update = Dagger.@spawn scope=Dagger.scope(worker=acc.worker_mapping[slice]) view(acc._moments_shard)  # this needs an In(), but that makes it error
+    #     #     Dagger.@spawn scope=Dagger.scope(worker=acc.worker_mapping[slice]) copyto!(InOut(_moments_to_update), In(_moments_update))
+    #     # end
+    #     # println("finished 2nd pass")
+        
+    #     # init_ls = acc.totals .== 0
+    #     # update_ls = acc.totals .!= 0
+    #     # if any(init_ls)
+    #     #     @inbounds acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
+    #     #     @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
+    #     # end
+    #     # if any(update_ls)
+    #     #     throw(ErrorException("Not supposed to happen!"))
+    #     # end
+    # end
     println("finished merge")
     return nothing
 end
