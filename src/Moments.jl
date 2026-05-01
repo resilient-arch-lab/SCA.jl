@@ -103,6 +103,44 @@ struct UniVarMomentsAccDagger2{Tt<:AbstractFloat, Tl<:Integer}
     end
 end
 
+# Intermediate struct for 1 slice x 1 batch, mutli label (but only 1 label batch)
+struct UniVarMomentsAccDaggerWorker{Tt<:AbstractFloat, Tl<:Integer}
+    worker_idx::NTuple{2, Int}
+    totals::Array
+    moments::Array
+    order::UInt
+    ns::UInt
+    nl::UInt
+    lsize::Int
+
+    _totals::Array
+    _moments::Array
+    _sums::Array
+
+    function UniVarMomentsAccDaggerWorker{Tt, Tl}(workers, order, ns, nl, chunksize, lsize)
+        
+    end
+end
+
+# Traces chunked in 2 dims, where work in independent over dim2
+# Labels chunked in 2 dims
+struct UniVarMomentsAccDagger3{Tt<:AbstractFloat, Tl<:Integer}
+    workers::Array{Int, 2}
+    totals::Array
+    moments::Array
+    order::UInt
+    ns::UInt
+    nl::UInt
+    lsize::Int
+
+    worker_structs::Array{UniVarMomentsAccDaggerWorker, 2}
+
+    function UniVarMomentsAccDagger3{Tt, Tl}(workers, order, ns, nl, chunksize, lsize) where {Tt<:AbstractFloat, Tl<:Integer}
+
+    end
+end
+
+
 # right now this is slower than running a UniVarMomentsAccs for each label element
 struct UniVarMomentsAccNDLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
     totals::Tarray  # Tarray is a typevar, which you can't parameterize directly 
