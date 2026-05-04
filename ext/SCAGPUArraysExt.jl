@@ -1,9 +1,13 @@
 module SCAGPUArraysExt
 
 using SCA
-using SCA.Moments: UniVarMomentsAcc, label_wise_sum_ak!, centered_sum_kern_ak_transposed!, merge_from_ak!
+using SCA.Moments: UniVarMomentsAcc, UniVarMomentsAccVecLabel, label_wise_sum_ak!, centered_sum_kern_ak_transposed!, centered_sum_kern_ak!, merge_from_ak!
 using GPUArrays
 using KernelAbstractions
+using Dagger
+
+import SCA.Moments: centered_sum_update_pass_1!, centered_sum_update_pass_2!
+
 
 function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractGPUArray{Tt}, labels::AbstractGPUArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractGPUArray}
     # initialize intermediate values (these could be allocated on `acc` construction)
@@ -48,6 +52,68 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
         @inbounds acc.totals[update_ls] .+= acc._totals[update_ls]
     end
 end
+
+function centered_sum_update_pass_1!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractGPUArray{Tt}, labels::AbstractGPUArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractGPUArray, LD}
+    @boundscheck begin
+        checkbounds(acc._sums, LD, acc.nl, size(traces, 2))
+        checkbounds(acc._moments, LD, acc.nl, acc.order, size(traces, 2))
+        checkbounds(labels, size(traces, 1), LD)
+    end
+
+    label_wise_sum_ak!(traces, labels, acc._sums, acc._totals)
+
+    # centered_sum_kern_ak_transposed!(acc._moments, traces, labels)
+
+    # acc.moments .= acc._moments
+    # acc.totals .= acc._totals
+
+    # Dagger.spawn_datadeps() do 
+    #     # initialize intermediate values (these could be allocated on `acc` construction)
+    #     Dagger.@spawn fill!(Out(acc._sums), 0)
+    #     Dagger.@spawn fill!(Out(acc._moments), 0)
+    #     Dagger.@spawn fill!(Out(acc._totals), 0)
+
+    #     # first pass
+    #     Dagger.@spawn label_wise_sum_ak!(In(traces), In(labels), InOut(acc._sums), InOut(acc._totals))
+
+    #     # find means
+    #     Dagger.@spawn broadcast!(/, Out(view(acc._moments, :, :, 1, :)), In(acc._sums), In(acc._totals))
+
+    #     # second pass
+    #     Dagger.@spawn centered_sum_kern_ak_transposed!(InOut(acc._moments), In(traces), In(labels))
+
+    #     # merge centered sum estimations
+    #     init_ls = acc.totals .== 0
+    #     update_ls = acc.totals .!= 0
+    #     if any(init_ls)
+    #         @inbounds acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
+    #         @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
+    #     end
+    #     if any(update_ls)
+    #         throw(error("Not supposed to happen"))
+    #     end
+    # end
+
+    return
+end
+
+function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractGPUArray{Tt}, labels::AbstractGPUArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractGPUArray, LD}
+    @boundscheck begin
+        checkbounds(acc._sums, LD, acc.nl, size(traces, 2))
+        checkbounds(acc._moments, LD, acc.nl, acc.order, size(traces, 2))
+        checkbounds(labels, size(traces, 1), LD)
+    end
+
+    @. acc._moments[:, :, 1, :] = acc._sums / acc._totals
+
+    centered_sum_kern_ak!(acc._moments, traces, labels)
+
+    acc.moments .= acc._moments
+    acc.totals .= acc._totals
+
+    return
+end
+
 
 
 end

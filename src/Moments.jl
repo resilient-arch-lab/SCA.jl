@@ -4,7 +4,7 @@ Parallel estimation of statistical moments. based on the implementation from
 """
 
 module Moments
-export UniVarMomentsAcc, centered_sum_update!, merge_from!, get_mean_and_var
+export UniVarMomentsAcc, centered_sum_update!, merge_from!, get_mean_and_var, UniVarMomentsAccVecLabel, centered_sum_update_pass_1!, centered_sum_update_pass_2!
 
 include("Utils.jl")
 using .Utils
@@ -103,44 +103,6 @@ struct UniVarMomentsAccDagger2{Tt<:AbstractFloat, Tl<:Integer}
     end
 end
 
-# Intermediate struct for 1 slice x 1 batch, mutli label (but only 1 label batch)
-struct UniVarMomentsAccDaggerWorker{Tt<:AbstractFloat, Tl<:Integer}
-    worker_idx::NTuple{2, Int}
-    totals::Array
-    moments::Array
-    order::UInt
-    ns::UInt
-    nl::UInt
-    lsize::Int
-
-    _totals::Array
-    _moments::Array
-    _sums::Array
-
-    function UniVarMomentsAccDaggerWorker{Tt, Tl}(workers, order, ns, nl, chunksize, lsize)
-        
-    end
-end
-
-# Traces chunked in 2 dims, where work in independent over dim2
-# Labels chunked in 2 dims
-struct UniVarMomentsAccDagger3{Tt<:AbstractFloat, Tl<:Integer}
-    workers::Array{Int, 2}
-    totals::Array
-    moments::Array
-    order::UInt
-    ns::UInt
-    nl::UInt
-    lsize::Int
-
-    worker_structs::Array{UniVarMomentsAccDaggerWorker, 2}
-
-    function UniVarMomentsAccDagger3{Tt, Tl}(workers, order, ns, nl, chunksize, lsize) where {Tt<:AbstractFloat, Tl<:Integer}
-
-    end
-end
-
-
 # right now this is slower than running a UniVarMomentsAccs for each label element
 struct UniVarMomentsAccNDLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
     totals::Tarray  # Tarray is a typevar, which you can't parameterize directly 
@@ -160,6 +122,26 @@ struct UniVarMomentsAccNDLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractA
         _moments = similar(moments)
         _sums = Tarray{Tt, 2+LD}(undef, label_shape..., nl, ns)
         new{Tt, Tl, Tarray, LD}(totals, moments, order, ns, nl, label_shape, _totals, _moments, _sums)
+    end
+end
+
+struct UniVarMomentsAccVecLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
+    totals::Tarray
+    moments::Tarray
+    order::UInt
+    ns::UInt
+    nl::UInt
+    _totals::Tarray
+    _moments::Tarray
+    _sums::Tarray
+
+    function UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}(order, ns, nl) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD} 
+        totals = fill!(Tarray{UInt32, 2}(undef, LD, nl), 0)
+        moments = fill!(Tarray{Tt, 4}(undef, LD, nl, order, ns), 0)
+        _totals = fill!(similar(totals), 0)
+        _moments = fill!(similar(moments), 0)
+        _sums = fill!(Tarray{Tt, 3}(undef, LD, nl, ns), 0)
+        new{Tt, Tl, Tarray, LD}(totals, moments, order, ns, nl, _totals, _moments, _sums)
     end
 end
 
@@ -228,7 +210,7 @@ function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::Abstr
     return sums, totals
 end
 
-function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
+function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     @inbounds AK.foraxes(traces, 2) do j
         for i in axes(traces, 1)
             for l in axes(labels, 2)
@@ -237,6 +219,20 @@ function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{T
                     totals[l, l_i] += 1
                 end
                 sums[l, l_i, j] += traces[i, j]
+            end
+        end
+    end
+end
+
+function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
+    @inbounds AK.foraxes(traces, 1) do i
+        for j in axes(traces, 2)
+            for l in axes(labels, 2)
+                l_i = convert(Int32, labels[i, l]+1)
+                if j == 1
+                    Atomix.@atomic totals[l, l_i] += 1
+                end
+                Atomix.@atomic sums[l, l_i, j] += traces[i, j]
             end
         end
     end
@@ -463,7 +459,7 @@ function centered_sum_update!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}, 
         labels = Tarray(labels)
     end
 
-    @time "label_wise_sum_ak!" label_wise_sum_ak!(traces, labels, acc._sums, acc._totals)
+    @time "label_wise_sum_ak!" label_wise_sum_ak_transposed!(traces, labels, acc._sums, acc._totals)
 
     # find means
     @time "means" @. acc._moments[:, :, 1, :] = acc._sums / acc._totals
@@ -714,6 +710,70 @@ function centered_sum_update_dagger!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, trac
     end
     println("finished merge")
     return nothing
+end
+
+# First pass in two pass approach
+function centered_sum_update_pass_1!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
+    @boundscheck begin
+        checkbounds(acc._sums, LD, acc.nl, size(traces, 2))
+        checkbounds(acc._moments, LD, acc.nl, acc.order, size(traces, 2))
+        checkbounds(labels, size(traces, 1), LD)
+    end
+
+    label_wise_sum_ak_transposed!(traces, labels, acc._sums, acc._totals)
+
+    return
+end
+
+# Second pass in two pass approach
+function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
+    @boundscheck begin
+        checkbounds(acc._sums, LD, acc.nl, size(traces, 2))
+        checkbounds(acc._moments, LD, acc.nl, acc.order, size(traces, 2))
+        checkbounds(labels, size(traces, 1), LD)
+    end
+
+    @. acc._moments[:, :, 1, :] = acc._sums / acc._totals
+
+    centered_sum_kern_ak!(acc._moments, traces, labels)
+
+    acc.moments .= acc._moments
+    acc.totals .= acc._totals
+
+    return
+end
+
+function get_moments_dagger(traces::DArray{Tt}, labels::DArray{Tl}, order, nl) where {Tt<:AbstractFloat, Tl<:Integer}
+    @boundscheck begin
+        checkbounds(traces.chunks, size(labels.chunks, 1), 1)
+        checkbounds(labels.chunks, size(traces.chunks, 1), 1)
+    end
+
+    chunk_idxs = (size(traces.chunks)..., size(labels.chunks, 2))
+
+    # Doing this with a DArray wont work :(
+    M = DArray{UniVarMomentsAccVecLabel, 3}(missing, chunk_idxs...)
+    for idx in CartesianIndices(M)
+        M[idx] = UniVarMomentsAccVecLabel{Tt, Tl, Array, size(labels, 2)}(order, size(traces.subdomains[idx[1:2]...], 2), nl)
+    end
+
+    Dagger.spawn_datadeps() do 
+        # first pass
+        for chunk_idx in CartesianIndices(M)
+            Dagger.@spawn centered_sum_update_pass_1!(InOut(M[chunk_idx]), In(traces.chunks[idx[1:2]...]), In(labels.chunks[idx[1], idx[3]]))
+        end
+
+        # reduce
+        # for j_chunk in axes(M, 2)
+            # Dagge.@spawn InOut(M[1, j_chunk, :]._totals) += In(getproperty.(M[:, j_chunk, :], :_totals))
+        # end
+        
+        # second pass
+        for chunk_idx in CartesianIndices(M)
+            Dagger.@spawn centered_sum_update_pass_2!(InOut(M[chunk_idx]), In(traces.chunks[idx[1:2]...]), In(labels.chunks[idx[1], idx[3]]))
+        end
+    end
+
 end
 
 # Precision (even with Float64) seems to degrade from performing the same 
