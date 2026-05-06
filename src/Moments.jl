@@ -750,17 +750,18 @@ function get_moments_dagger(traces::DArray{Tt}, labels::DArray{Tl}, order, nl) w
     end
 
     chunk_idxs = (size(traces.chunks)..., size(labels.chunks, 2))
-
-    # Doing this with a DArray wont work :(
-    M = DArray{UniVarMomentsAccVecLabel, 3}(missing, chunk_idxs...)
-    for idx in CartesianIndices(M)
-        M[idx] = UniVarMomentsAccVecLabel{Tt, Tl, Array, size(labels, 2)}(order, size(traces.subdomains[idx[1:2]...], 2), nl)
+    MA = Array{Union{UniVarMomentsAccVecLabel, Nothing}, 3}(nothing, chunk_idxs...)
+    cart_chunk_idxs = CartesianIndices(MA)
+    M = DArray(MA, Blocks(1, 1, 1))
+    @sync for idx in cart_chunk_idxs
+        Dagger.@spawn M[idx] = UniVarMomentsAccVecLabel{Tt, Tl, Array, chunk_idxs[3]}(order, size(traces.subdomains[idx.I[1:2]...], 2), nl)
     end
 
+    # I keep getting a key error from the scheduler here?
     Dagger.spawn_datadeps() do 
         # first pass
-        for chunk_idx in CartesianIndices(M)
-            Dagger.@spawn centered_sum_update_pass_1!(InOut(M[chunk_idx]), In(traces.chunks[idx[1:2]...]), In(labels.chunks[idx[1], idx[3]]))
+        for chunk_idx in cart_chunk_idxs
+            Dagger.@spawn centered_sum_update_pass_1!(InOut(M[chunk_idx]), In(traces.chunks[chunk_idx.I[1:2]...]), In(labels.chunks[chunk_idx[1], chunk_idx[3]]))
         end
 
         # reduce
@@ -769,8 +770,8 @@ function get_moments_dagger(traces::DArray{Tt}, labels::DArray{Tl}, order, nl) w
         # end
         
         # second pass
-        for chunk_idx in CartesianIndices(M)
-            Dagger.@spawn centered_sum_update_pass_2!(InOut(M[chunk_idx]), In(traces.chunks[idx[1:2]...]), In(labels.chunks[idx[1], idx[3]]))
+        for chunk_idx in cart_chunk_idxs
+            Dagger.@spawn centered_sum_update_pass_2!(InOut(M[chunk_idx]), In(traces.chunks[chunk_idx.I[1:2]...]), In(labels.chunks[chunk_idx[1], chunk_idx[3]]))
         end
     end
 
