@@ -145,6 +145,20 @@ struct UniVarMomentsAccVecLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:Abstract
     end
 end
 
+function Dagger.move!(dep_mod::Any, from_space::Dagger.MemorySpace, to_space::Dagger.MemorySpace, from::UniVarMomentsAccVecLabel, to::UniVarMomentsAccVecLabel)
+    copyto!(dep_mod(to.totals), dep_mod(from.totals))
+    copyto!(dep_mod(to.moments), dep_mod(from.moments))
+
+    copyto!(dep_mod(to._totals), dep_mod(from._totals))
+    copyto!(dep_mod(to._moments), dep_mod(from._moments))
+    copyto!(dep_mod(to._sums), dep_mod(from._sums))
+    
+    # setproperty!(dep_mod(to), :order, dep_mod(from.order))
+    # setproperty!(dep_mod(to), :ns, dep_mod(from.ns))
+    # setproperty!(dep_mod(to), :nl, dep_mod(from.nl))
+    return
+end
+
 # works on CPU and GPU
 # Depricated in favor of AcceleratedKernels kernels (label_wise_sum_ak!)
 @kernel function label_wise_sum_shared!(@Const(traces::AbstractMatrix{Tt}), @Const(labels::AbstractVector{Tl}), sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
@@ -743,37 +757,95 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarra
     return
 end
 
-function get_moments_dagger(traces::DArray{Tt}, labels::DArray{Tl}, order, nl) where {Tt<:AbstractFloat, Tl<:Integer}
+# Works!
+function get_moments_dagger(traces::DArray{Tt}, labels::DArray{Tl}, order, nl, workers) where {Tt<:AbstractFloat, Tl<:Integer}
+    workers_scope = Dagger.scope(workers=workers, thread=1)
+
     @boundscheck begin
         checkbounds(traces.chunks, size(labels.chunks, 1), 1)
         checkbounds(labels.chunks, size(traces.chunks, 1), 1)
     end
 
+    # allocate output
+    mout = zeros(Tt, size(labels, 2), nl, order, size(traces, 2))
+    tout = zeros(UInt32, size(labels, 2), nl)
+
+    # set up distributed intermediate values
     chunk_idxs = (size(traces.chunks)..., size(labels.chunks, 2))
-    MA = Array{Union{UniVarMomentsAccVecLabel, Nothing}, 3}(nothing, chunk_idxs...)
+    MA = Array{Union{UniVarMomentsAccVecLabel{Tt, Tl, Array, labels.partitioning.blocksize[2]}, Nothing}, 3}(nothing, chunk_idxs...)
     cart_chunk_idxs = CartesianIndices(MA)
     M = DArray(MA, Blocks(1, 1, 1))
-    @sync for idx in cart_chunk_idxs
-        Dagger.@spawn M[idx] = UniVarMomentsAccVecLabel{Tt, Tl, Array, chunk_idxs[3]}(order, size(traces.subdomains[idx.I[1:2]...], 2), nl)
-    end
 
-    # I keep getting a key error from the scheduler here?
-    Dagger.spawn_datadeps() do 
-        # first pass
-        for chunk_idx in cart_chunk_idxs
-            Dagger.@spawn centered_sum_update_pass_1!(InOut(M[chunk_idx]), In(traces.chunks[chunk_idx.I[1:2]...]), In(labels.chunks[chunk_idx[1], chunk_idx[3]]))
+    # Dagger.with_options(;scope=workers_scope) do
+    Dagger.with_options(;scope=DefaultScope()) do
+        # initialize structs
+        @sync for idx in cart_chunk_idxs
+            Dagger.@spawn M[idx] = UniVarMomentsAccVecLabel{Tt, Tl, Array, labels.partitioning.blocksize[2]}(order, size(traces.subdomains[idx.I[1:2]...], 2), nl)
         end
 
-        # reduce
-        # for j_chunk in axes(M, 2)
-            # Dagge.@spawn InOut(M[1, j_chunk, :]._totals) += In(getproperty.(M[:, j_chunk, :], :_totals))
-        # end
-        
-        # second pass
-        for chunk_idx in cart_chunk_idxs
-            Dagger.@spawn centered_sum_update_pass_2!(InOut(M[chunk_idx]), In(traces.chunks[chunk_idx.I[1:2]...]), In(labels.chunks[chunk_idx[1], chunk_idx[3]]))
+        # 1st pass
+        @sync for chunk_idx in cart_chunk_idxs
+            Dagger.@spawn centered_sum_update_pass_1!(M[chunk_idx], traces.chunks[chunk_idx.I[1:2]...], labels.chunks[chunk_idx[1], chunk_idx[3]])
+        end
+
+        # reduce results
+        @sync for i_chunk in axes(M, 1)
+            for j_chunk in axes(M, 2)
+                if i_chunk == 1
+                    continue
+                end
+                @sync for l_chunk in axes(M, 3)
+                    if j_chunk == 1
+                        Dagger.@spawn broadcast!(+, M[1, j_chunk, l_chunk]._totals, M[1, j_chunk, l_chunk]._totals, M[i_chunk, j_chunk, l_chunk]._totals)
+                    end
+                    Dagger.@spawn broadcast!(+, M[1, j_chunk, l_chunk]._sums, M[1, j_chunk, l_chunk]._sums, M[i_chunk, j_chunk, l_chunk]._sums)
+                end
+            end
+        end
+        # and copy to the other intermediates
+        @sync for i_chunk in axes(M, 1)
+            for j_chunk in axes(M, 2)
+                @sync for l_chunk in axes(M, 3)
+                    Dagger.@spawn copyto!(M[i_chunk, j_chunk, l_chunk]._totals, M[1, 1, l_chunk]._totals)
+                    Dagger.@spawn copyto!(M[i_chunk, j_chunk, l_chunk]._sums, M[1, j_chunk, l_chunk]._sums)
+                end
+            end
+        end
+
+        # find means + 2nd pass
+        @sync for chunk_idx in cart_chunk_idxs
+            Dagger.@spawn centered_sum_update_pass_2!(M[chunk_idx], traces.chunks[chunk_idx.I[1:2]...], labels.chunks[chunk_idx[1], chunk_idx[3]])
+        end
+
+        # reduce final results
+        @sync for i_chunk in axes(M, 1)
+            for j_chunk in axes(M, 2)
+                if i_chunk == 1
+                    continue
+                end
+                @sync for l_chunk in axes(M, 3)
+                    Mview = 2:size(M[1, j_chunk, l_chunk].moments, 3)
+                    Mout = view(M[1, j_chunk, l_chunk].moments, :, :, Mview, :)
+                    Min = view(M[i_chunk, j_chunk, l_chunk].moments, :, :, Mview, :)
+                    Dagger.@spawn broadcast!(+, Mout, Mout, Min)
+                end
+            end
+        end
+
+        @sync for j_chunk in axes(M, 2)
+            for l_chunk in axes(M, 3)
+                l_idxs = labels.subdomains[1, l_chunk].indexes[2]
+                t_idxs = traces.subdomains[1, j_chunk].indexes[2]
+
+                if j_chunk == 1
+                    Dagger.@spawn copyto!(view(tout, l_idxs, :), fetch(M[1, j_chunk, l_chunk]).totals)
+                end
+                Dagger.@spawn copyto!(view(mout, l_idxs, :, :, t_idxs), fetch(M[1, j_chunk, l_chunk]).moments)
+            end
         end
     end
+
+    return mout, tout, M
 
 end
 
