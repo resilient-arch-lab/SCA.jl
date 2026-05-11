@@ -62,38 +62,6 @@ function centered_sum_update_pass_1!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarra
 
     label_wise_sum_ak!(traces, labels, acc._sums, acc._totals)
 
-    # centered_sum_kern_ak_transposed!(acc._moments, traces, labels)
-
-    # acc.moments .= acc._moments
-    # acc.totals .= acc._totals
-
-    # Dagger.spawn_datadeps() do 
-    #     # initialize intermediate values (these could be allocated on `acc` construction)
-    #     Dagger.@spawn fill!(Out(acc._sums), 0)
-    #     Dagger.@spawn fill!(Out(acc._moments), 0)
-    #     Dagger.@spawn fill!(Out(acc._totals), 0)
-
-    #     # first pass
-    #     Dagger.@spawn label_wise_sum_ak!(In(traces), In(labels), InOut(acc._sums), InOut(acc._totals))
-
-    #     # find means
-    #     Dagger.@spawn broadcast!(/, Out(view(acc._moments, :, :, 1, :)), In(acc._sums), In(acc._totals))
-
-    #     # second pass
-    #     Dagger.@spawn centered_sum_kern_ak_transposed!(InOut(acc._moments), In(traces), In(labels))
-
-    #     # merge centered sum estimations
-    #     init_ls = acc.totals .== 0
-    #     update_ls = acc.totals .!= 0
-    #     if any(init_ls)
-    #         @inbounds acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
-    #         @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
-    #     end
-    #     if any(update_ls)
-    #         throw(error("Not supposed to happen"))
-    #     end
-    # end
-
     return
 end
 
@@ -113,7 +81,5 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarra
 
     return
 end
-
-
 
 end

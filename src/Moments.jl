@@ -605,49 +605,7 @@ function centered_sum_update!(acc::UniVarMomentsAccDagger2{Tt, Tl}, traces::DArr
     if any(update_ls)
         throw(ErrorException("Not supposed to happen!"))
     end
-    # Dagger.spawn_datadeps() do
-    #     # for w ∈ acc.workers
-    #     #     Dagger.@spawn scope=Dagger.scope(worker=w) fill!(Out(acc._sums_shard), 0)
-    #     #     Dagger.@spawn scope=Dagger.scope(worker=w) fill!(Out(acc._totals_shard), 0)
-    #     # end
-
-    #     # println("prepared shards")
-        
-    #     for batch ∈ axes(traces.chunks, 1)
-    #         # Dagger.@spawn label_wise_sum_ak_transposed!(In(traces.chunks[batch]), In(labels.chunks[batch]), InOut(acc._sums_shard), InOut(acc._totals_shard))
-    #     end
-    #     Dagger.@spawn broadcast!(+, Out(acc._sums), In.(acc._sums_shard)...)  # reduce distributed intermediate results
-    #     Dagger.@spawn broadcast!(+, Out(acc._totals), In.(acc._totals_shard)...)  # reduce distributed intermediate results
-    #     println("finished 1st pass")
-
-    #     # @. acc._moments[:, 1, :] = acc._sums / acc._totals
-    #     # for slice ∈ axes(traces.chunks, 2)
-    #     #     slice_idxs = Dagger.indexes(traces.subdomains[1, slice])[2]
-    #     #     Dagger.@spawn scope=Dagger.scope(worker=acc.worker_mapping[slice]) copyto!(Out(acc._moments_shard), In(acc._moments[:, :, slice_idxs]))
-    #     # end
-    #     # println("calculated mean and distributed result")
-
-    #     # for slice ∈ axes(traces.chunks, 2)
-    #     #     slice_idxs = Dagger.indexes(traces.subdomains[1, slice])[2]
-    #     #     for batch ∈ axes(traces.chunks, 1)
-    #     #         Dagger.@spawn scope=workers_scope centered_sum_kern_ak_transposed!(InOut(acc._moments_shard), In(traces.chunks[slice, batch]), In(labels.chunks[batch]))
-    #     #     end
-    #     #     _moments_to_update = view(acc._moments, :, 2:size(acc._moments, 2), slice_idxs)
-    #     #     _moments_update = Dagger.@spawn scope=Dagger.scope(worker=acc.worker_mapping[slice]) view(acc._moments_shard)  # this needs an In(), but that makes it error
-    #     #     Dagger.@spawn scope=Dagger.scope(worker=acc.worker_mapping[slice]) copyto!(InOut(_moments_to_update), In(_moments_update))
-    #     # end
-    #     # println("finished 2nd pass")
-        
-    #     # init_ls = acc.totals .== 0
-    #     # update_ls = acc.totals .!= 0
-    #     # if any(init_ls)
-    #     #     @inbounds acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
-    #     #     @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
-    #     # end
-    #     # if any(update_ls)
-    #     #     throw(ErrorException("Not supposed to happen!"))
-    #     # end
-    # end
+   
     println("finished merge")
     return nothing
 end
@@ -758,95 +716,90 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarra
 end
 
 # Works!
-function get_moments_dagger(traces::DArray{Tt}, labels::DArray{Tl}, order, nl, workers) where {Tt<:AbstractFloat, Tl<:Integer}
-    workers_scope = Dagger.scope(workers=workers, thread=1)
-
+# would be better if the mapping of trace / label chunks to workers was explicit, so
+# that the structs could be allocated on the right workers and not moved.
+function get_moments_dagger(traces::DArray{Tt}, labels::DArray{Tl}, order, nl, Tarray::Type)::Tuple{Tarray, Tarray, DArray} where {Tt<:AbstractFloat, Tl<:Integer}
     @boundscheck begin
         checkbounds(traces.chunks, size(labels.chunks, 1), 1)
         checkbounds(labels.chunks, size(traces.chunks, 1), 1)
     end
 
     # allocate output
-    mout = zeros(Tt, size(labels, 2), nl, order, size(traces, 2))
-    tout = zeros(UInt32, size(labels, 2), nl)
+    mout = Tarray(zeros(Tt, size(labels, 2), nl, order, size(traces, 2)))
+    tout = Tarray(zeros(UInt32, size(labels, 2), nl))
 
     # set up distributed intermediate values
     chunk_idxs = (size(traces.chunks)..., size(labels.chunks, 2))
-    MA = Array{Union{UniVarMomentsAccVecLabel{Tt, Tl, Array, labels.partitioning.blocksize[2]}, Nothing}, 3}(nothing, chunk_idxs...)
+    MA = Array{Union{UniVarMomentsAccVecLabel{Tt, Tl, Tarray, labels.partitioning.blocksize[2]}, Nothing}, 3}(nothing, chunk_idxs...)
     cart_chunk_idxs = CartesianIndices(MA)
     M = DArray(MA, Blocks(1, 1, 1))
 
-    # Dagger.with_options(;scope=workers_scope) do
-    Dagger.with_options(;scope=DefaultScope()) do
-        # initialize structs
-        @sync for idx in cart_chunk_idxs
-            Dagger.@spawn M[idx] = UniVarMomentsAccVecLabel{Tt, Tl, Array, labels.partitioning.blocksize[2]}(order, size(traces.subdomains[idx.I[1:2]...], 2), nl)
-        end
+    # initialize structs
+    @sync for idx in cart_chunk_idxs
+        Dagger.@spawn M[idx] = UniVarMomentsAccVecLabel{Tt, Tl, Tarray, labels.partitioning.blocksize[2]}(order, size(traces.subdomains[idx.I[1:2]...], 2), nl)
+    end
 
-        # 1st pass
-        @sync for chunk_idx in cart_chunk_idxs
-            Dagger.@spawn centered_sum_update_pass_1!(M[chunk_idx], traces.chunks[chunk_idx.I[1:2]...], labels.chunks[chunk_idx[1], chunk_idx[3]])
-        end
+    # 1st pass
+    @sync for chunk_idx in cart_chunk_idxs
+        Dagger.@spawn centered_sum_update_pass_1!(M[chunk_idx], traces.chunks[chunk_idx.I[1:2]...], labels.chunks[chunk_idx[1], chunk_idx[3]])
+    end
 
-        # reduce results
-        @sync for i_chunk in axes(M, 1)
-            for j_chunk in axes(M, 2)
-                if i_chunk == 1
-                    continue
-                end
-                @sync for l_chunk in axes(M, 3)
-                    if j_chunk == 1
-                        Dagger.@spawn broadcast!(+, M[1, j_chunk, l_chunk]._totals, M[1, j_chunk, l_chunk]._totals, M[i_chunk, j_chunk, l_chunk]._totals)
-                    end
-                    Dagger.@spawn broadcast!(+, M[1, j_chunk, l_chunk]._sums, M[1, j_chunk, l_chunk]._sums, M[i_chunk, j_chunk, l_chunk]._sums)
-                end
-            end
-        end
-        # and copy to the other intermediates
-        @sync for i_chunk in axes(M, 1)
-            for j_chunk in axes(M, 2)
-                @sync for l_chunk in axes(M, 3)
-                    Dagger.@spawn copyto!(M[i_chunk, j_chunk, l_chunk]._totals, M[1, 1, l_chunk]._totals)
-                    Dagger.@spawn copyto!(M[i_chunk, j_chunk, l_chunk]._sums, M[1, j_chunk, l_chunk]._sums)
-                end
-            end
-        end
-
-        # find means + 2nd pass
-        @sync for chunk_idx in cart_chunk_idxs
-            Dagger.@spawn centered_sum_update_pass_2!(M[chunk_idx], traces.chunks[chunk_idx.I[1:2]...], labels.chunks[chunk_idx[1], chunk_idx[3]])
-        end
-
-        # reduce final results
-        @sync for i_chunk in axes(M, 1)
-            for j_chunk in axes(M, 2)
-                if i_chunk == 1
-                    continue
-                end
-                @sync for l_chunk in axes(M, 3)
-                    Mview = 2:size(M[1, j_chunk, l_chunk].moments, 3)
-                    Mout = view(M[1, j_chunk, l_chunk].moments, :, :, Mview, :)
-                    Min = view(M[i_chunk, j_chunk, l_chunk].moments, :, :, Mview, :)
-                    Dagger.@spawn broadcast!(+, Mout, Mout, Min)
-                end
-            end
-        end
-
+    # reduce results and copy back to the other workers
+    @sync for i_chunk in axes(M, 1)
         @sync for j_chunk in axes(M, 2)
+            if i_chunk == 1
+                continue
+            end
             for l_chunk in axes(M, 3)
-                l_idxs = labels.subdomains[1, l_chunk].indexes[2]
-                t_idxs = traces.subdomains[1, j_chunk].indexes[2]
-
                 if j_chunk == 1
-                    Dagger.@spawn copyto!(view(tout, l_idxs, :), fetch(M[1, j_chunk, l_chunk]).totals)
+                    Dagger.@spawn broadcast!(+, M[1, j_chunk, l_chunk]._totals, M[1, j_chunk, l_chunk]._totals, M[i_chunk, j_chunk, l_chunk]._totals)
                 end
-                Dagger.@spawn copyto!(view(mout, l_idxs, :, :, t_idxs), fetch(M[1, j_chunk, l_chunk]).moments)
+                Dagger.@spawn broadcast!(+, M[1, j_chunk, l_chunk]._sums, M[1, j_chunk, l_chunk]._sums, M[i_chunk, j_chunk, l_chunk]._sums)
+            end
+        end
+    end
+    @sync for i_chunk in axes(M, 1)
+        for j_chunk in axes(M, 2)
+            for l_chunk in axes(M, 3)
+                Dagger.@spawn copyto!(M[i_chunk, j_chunk, l_chunk]._totals, M[1, 1, l_chunk]._totals)
+                Dagger.@spawn copyto!(M[i_chunk, j_chunk, l_chunk]._sums, M[1, j_chunk, l_chunk]._sums)
             end
         end
     end
 
-    return mout, tout, M
+    # find means + 2nd pass
+    @sync for chunk_idx in cart_chunk_idxs
+        Dagger.@spawn centered_sum_update_pass_2!(M[chunk_idx], traces.chunks[chunk_idx.I[1:2]...], labels.chunks[chunk_idx[1], chunk_idx[3]])
+    end
 
+    # reduce final results
+    @sync for i_chunk in axes(M, 1)
+        @sync for j_chunk in axes(M, 2)
+            if i_chunk == 1
+                continue
+            end
+            for l_chunk in axes(M, 3)
+                Mview = 2:size(M[1, j_chunk, l_chunk].moments, 3)
+                Mout = view(M[1, j_chunk, l_chunk].moments, :, :, Mview, :)
+                Min = view(M[i_chunk, j_chunk, l_chunk].moments, :, :, Mview, :)
+                Dagger.@spawn broadcast!(+, Mout, Mout, Min)
+            end
+        end
+    end
+
+    @sync for j_chunk in axes(M, 2)
+        for l_chunk in axes(M, 3)
+            l_idxs = labels.subdomains[1, l_chunk].indexes[2]
+            t_idxs = traces.subdomains[1, j_chunk].indexes[2]
+
+            if j_chunk == 1
+                Dagger.@spawn copyto!(view(tout, l_idxs, :), fetch(M[1, j_chunk, l_chunk]).totals)
+            end
+            Dagger.@spawn copyto!(view(mout, l_idxs, :, :, t_idxs), fetch(M[1, j_chunk, l_chunk]).moments)
+        end
+    end
+
+    return mout, tout, M
 end
 
 # Precision (even with Float64) seems to degrade from performing the same 

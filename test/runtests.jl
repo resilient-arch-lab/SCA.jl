@@ -21,7 +21,7 @@ using GraphViz
     m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(2, 10, 256)
 
     Moments.centered_sum_update!(m1, t, l1)
-    (m2out, t2out, M) = Moments.get_moments_dagger(td, ld, 2, 256, workers) 
+    (m2out, t2out, M) = Moments.get_moments_dagger(td, ld, 2, 256, Array) 
 
     @test all(m1.totals .== t2out[1, :])
     if !all(m1.totals .== t2out[1, :])
