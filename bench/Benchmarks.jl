@@ -125,6 +125,26 @@ function bench_Moments_NDLabel(TArray::Type = Array)
     run(bench_suite, verbose = true, seconds = 5)
 end
 
+function bench_Moments_VecLabel(TArray::Type = Array)
+    t = TArray(rand(Float32, 100000, 1000))
+    l = TArray(rand(UInt8, 100000, 16))
+    m1 = Moments.UniVarMomentsAcc{Float32, UInt8, TArray}(8, 1000, 256)
+    m2 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, TArray, 8}(8, 1000, 256)
+    m3 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, TArray, 16}(8, 1000, 256)
+    m4 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, TArray, 4}(8, 1000, 256)
+    mlist = [Moments.UniVarMomentsAcc{Float32, UInt8, TArray}(8, 1000, 256) for _ in 1:8]
+
+    bench_suite["Centered Sum Update, 1 scalar label"] = @benchmarkable Moments.centered_sum_update!($m1, $t, $l[:, 1])
+    bench_suite["Centered Sum Update, vec 4 label"] = @benchmarkable Moments.centered_sum_update!($m4, $t, $l[:, 1:4])  # [106μs on RX9070XT]
+    bench_suite["Centered Sum Update, vec 8 label"] = @benchmarkable Moments.centered_sum_update!($m2, $t, $l[:, 1:8])  
+    bench_suite["Centered Sum Update, vec 16 label"] = @benchmarkable Moments.centered_sum_update!($m3, $t, $l) 
+    bench_suite["Centered Sum Update, 8 scalar label"] = @benchmarkable Moments.centered_sum_update!.($mlist, $[view(t, :, :) for _ in 1:8], $[l[:, i] for i in 1:8])
+
+    println("Tuning benchmark parameters")
+    tune!(bench_suite)
+    run(bench_suite, verbose = true, seconds = 5)
+end
+
 # minimal memory overhead
 function bench_chunked_memory_use()
     t = rand(Float32, 500000, 1000)

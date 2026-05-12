@@ -802,6 +802,11 @@ function get_moments_dagger(traces::DArray{Tt}, labels::DArray{Tl}, order, nl, T
     return mout, tout, M
 end
 
+function centered_sum_update!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
+    centered_sum_update_pass_1!(acc, traces, labels)
+    centered_sum_update_pass_2!(acc, traces, labels)
+end
+
 # Precision (even with Float64) seems to degrade from performing the same 
 # computation in a single centered_sum_update! for the same data. Use of 
 # this should be minimized, prefer larger update batches whenever possible
