@@ -74,12 +74,17 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarra
 
     @. acc._moments[:, :, 1, :] = acc._sums / acc._totals
 
-    centered_sum_kern_ak!(acc._moments, traces, labels)
+    centered_sum_kern_ak_transposed!(acc._moments, traces, labels)
 
     acc.moments .= acc._moments
     acc.totals .= acc._totals
 
     return
+end
+
+function centered_sum_update!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractGPUArray{Tt}, labels::AbstractGPUArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractGPUArray, LD}
+    centered_sum_update_pass_1!(acc, traces, labels)
+    centered_sum_update_pass_2!(acc, traces, labels)
 end
 
 end

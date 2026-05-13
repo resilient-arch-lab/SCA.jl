@@ -5,4 +5,10 @@ Ryzen 7 3800X:
 "Centered Sum Update, vec 8 label" => Trial(1.377 s)
 "Centered Sum Update, vec 16 label" => Trial(2.533 s)
 
+i9-12900
+"Centered Sum Update, 1 scalar label" => Trial(75.641 ms)
+"Centered Sum Update, 8 scalar label" => Trial(677.498 ms)
+"Centered Sum Update, vec 4 label" => Trial(370.050 ms)
+"Centered Sum Update, vec 8 label" => Trial(798.587 ms)
+"Centered Sum Update, vec 16 label" => Trial(1.809 s)
 
