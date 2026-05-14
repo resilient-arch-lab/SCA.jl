@@ -161,12 +161,10 @@ end
 
 function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     @inbounds AK.foraxes(traces, 1) do i
-        for j in axes(traces, 2)
-            for l in axes(labels, 2)
-                l_i = convert(Int32, labels[i, l]+1)
-                if j == 1
-                    Atomix.@atomic totals[l, l_i] += 1
-                end
+        for l in axes(labels, 2)
+            l_i = convert(Int32, labels[i, l]+1)
+            Atomix.@atomic totals[l, l_i] += 1
+            for j in axes(traces, 2)
                 Atomix.@atomic sums[l, l_i, j] += traces[i, j]
             end
         end
@@ -270,15 +268,16 @@ end
 function centered_sum_kern_ak!(moments::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     order = size(moments, 3)
     to_update = @view moments[:, :, 2:end, :]
+    ditr = 1:size(to_update, 3)
 
     @inbounds AK.foraxes(traces, 2) do j
         for i in axes(traces, 1)
             t_i = traces[i, j]
-            for l in axes(labels, 2)
+            for l in axes(moments, 1)
                 l_i = convert(Int32, labels[i, l]+1)
                 t_update = t_i - moments[l, l_i, 1, j]
                 pow = t_update
-                for d in axes(to_update, 3)
+                for d in ditr
                     pow *= t_update
                     to_update[l, l_i, d, j] += pow
                 end
