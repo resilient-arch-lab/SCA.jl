@@ -14,7 +14,6 @@ using KernelAbstractions, Atomix
 import AcceleratedKernels as AK
 using Base: convert
 using FixedSizeArrays
-using Dagger
 
 # TODO: I'm not convinced this actually needs to be parameterized on the array type, and it
 # does complicate things slightly.
@@ -36,36 +35,6 @@ struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
         _moments = similar(moments)
         _sums = Tarray{Tt, 2}(undef, nl, ns)
         new(totals, moments, order, ns, nl, _totals, _moments, _sums)
-    end
-end
-
-struct UniVarMomentsAccDagger2{Tt<:AbstractFloat, Tl<:Integer}
-    workers::Array{Int, 1}
-    totals::Array
-    moments::Array
-    order::UInt
-    ns::UInt
-    nl::UInt
-    chunksize::Int
-    _totals::Array  # reduced intermediate result
-    _moments::Array  # reduced intermediate result
-    _sums::Array  # reduced intermediate result
-    _totals_shard::Dagger.Shard  # distributed pre-reduction intermediate result
-    _moments_shard::Dagger.Shard  # distributed pre-reduction intermediate result
-    _sums_shard::Dagger.Shard  # distributed pre-reduction intermediate result
-
-    function UniVarMomentsAccDagger2{Tt, Tl}(workers, order, ns, nl, chunksize) where {Tt<:AbstractFloat, Tl<:Integer}
-        totals = zeros(UInt32, nl)
-        moments = zeros(Tt, nl, order, ns)
-        
-        _totals = similar(totals)
-        _moments = similar(moments)
-        _sums = zeros(Tt, nl, ns)
-        _totals_shard = Dagger.@shard workers=workers similar(totals)
-        _moments_shard = Dagger.@shard workers=workers similar(moments)
-        _sums_shard = Dagger.@shard workers=workers similar(_sums)
-
-        new(workers, totals, moments, order, ns, nl, chunksize, _totals, _moments, _sums, _totals_shard, _moments_shard, _sums_shard)
     end
 end
 
@@ -109,20 +78,6 @@ struct UniVarMomentsAccVecLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:Abstract
         _sums = fill!(Tarray{Tt, 3}(undef, LD, nl, ns), 0)
         new{Tt, Tl, Tarray, LD}(totals, moments, order, ns, nl, _totals, _moments, _sums)
     end
-end
-
-function Dagger.move!(dep_mod::Any, from_space::Dagger.MemorySpace, to_space::Dagger.MemorySpace, from::UniVarMomentsAccVecLabel, to::UniVarMomentsAccVecLabel)
-    copyto!(dep_mod(to.totals), dep_mod(from.totals))
-    copyto!(dep_mod(to.moments), dep_mod(from.moments))
-
-    copyto!(dep_mod(to._totals), dep_mod(from._totals))
-    copyto!(dep_mod(to._moments), dep_mod(from._moments))
-    copyto!(dep_mod(to._sums), dep_mod(from._sums))
-    
-    # setproperty!(dep_mod(to), :order, dep_mod(from.order))
-    # setproperty!(dep_mod(to), :ns, dep_mod(from.ns))
-    # setproperty!(dep_mod(to), :nl, dep_mod(from.nl))
-    return
 end
 
 # works on CPU and GPU
@@ -469,126 +424,6 @@ end
 
 # There's the potential for shards to be larger than the slice they're correlated with
 
-# Now we assume that each acc struct only has one slice, and that traces / labels are distributed over dim 1 only
-# Shards dont work with datadeps...
-function centered_sum_update!(acc::UniVarMomentsAccDagger2{Tt, Tl}, traces::DArray{Tt, 2}, labels::DArray{Tl, 1}) where {Tt<:AbstractFloat, Tl<:Integer}
-    workers_scope = Dagger.scope(workers=acc.workers, thread=1)  # I should be using theread=1 to not mess up the internal multithreading on each worker
-    @sync for w ∈ acc.workers
-        Dagger.@spawn scope=Dagger.scope(worker=w) fill!(acc._sums_shard, 0)
-        Dagger.@spawn scope=Dagger.scope(worker=w) fill!(acc._totals_shard, 0)
-    end
-    wait(Dagger.@spawn fill!(acc._moments, 0))
-    println("prepared shards")
-
-    @sync for batch ∈ axes(traces.chunks, 1)
-        Dagger.@spawn label_wise_sum_ak_transposed!(traces.chunks[batch], labels.chunks[batch], acc._sums_shard, acc._totals_shard)
-    end
-
-    Dagger.spawn_datadeps() do
-        Dagger.@spawn broadcast!(+, Out(acc._sums), In.(acc._sums_shard)...)  # reduce distributed intermediate results
-        Dagger.@spawn broadcast!(+, Out(acc._totals), In.(acc._totals_shard)...)  # reduce distributed intermediate results
-        println("finished 1st pass")
-
-        Dagger.@spawn broadcast!(/, Out(view(acc._moments, :, 1, :)), In(acc._sums), In(acc._totals))
-        # Dagger.@spawn copyto!.(Out.(acc._moments_shard), In(acc._moments))
-        println("calculated means")
-    end
-
-    @sync for batch ∈ axes(traces.chunks, 1)
-        Dagger.@spawn centered_sum_kern_ak_transposed!(InOut(acc._moments_shard), traces.chunks[batch], labels.chunks[batch])
-    end
-    println("finished pass 2")
-
-    wait(Dagger.@spawn broadcast!(+, view(acc._moments, :, 2:size(acc._moments, 2), :), view.(acc._moments_shard, :, 2:size(acc._moments, 2), :)...))
-
-    init_ls = acc.totals .== 0
-    update_ls = acc.totals .!= 0
-    if any(init_ls)
-        @inbounds acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
-        @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
-    end
-    if any(update_ls)
-        throw(ErrorException("Not supposed to happen!"))
-    end
-   
-    println("finished merge")
-    return nothing
-end
-
-# Assume that the dataset has been split over the time axis between nodes already. Any distributed
-# parallelism added in this function should consider that.
-# State:
-#   Currently its accurate. However, every time this is called theres a lot of overhead. It seems to mostly
-#   be coming from allocation of distributed arrays. Maybe I could create a new UniVarMomentsAcc struct that
-#   holds a `workers` array and pre-allocated distributed arrays.
-#   Using shards (correctly this time) actually reduced overhead a lot
-function centered_sum_update_dagger!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}, ctx::Context, workers::Array{Int, 1}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    workers_scope = Dagger.scope(workers=workers, thread=1)
-    
-    @boundscheck begin
-        checkbounds(acc._sums, acc.nl, size(traces, 2))
-        checkbounds(acc._moments, acc.nl, acc.order, size(traces, 2))
-        checkbounds(labels, size(traces, 1))
-    end
-
-    # For each Proccessor (worker) in ctx.procs, return the set of ThreadProc / GPUDeviceProc it contains
-    # sub_processors = Dagger.get_processors.(ctx.procs)
-
-    _sums = Dagger.@shard workers=workers fill!(similar(acc._sums), 0)
-    _totals = Dagger.@shard workers=workers fill!(similar(acc._totals), 0)
-    
-    # _sums = zeros(Blocks(1, size(acc._sums)...), eltype(acc._sums), size(workers, 1), size(acc._sums)...)
-    # _totals = zeros(Blocks(1, size(acc._totals)...), eltype(acc._totals), size(workers, 1), size(acc._totals)...)
-    # _moments = zeros(Blocks(1, size(acc._moments)...), eltype(acc._moments), size(workers, 1), size(acc._moments)...)
-    fill!(acc._moments, 0)
-
-    Dtraces = distribute(traces, Blocks(Int(ceil(size(traces, 1) / size(workers, 1))), size(traces, 2)), reshape(workers, size(workers, 1), 1))
-    Dlabels = distribute(labels, Blocks(Int(ceil(size(labels, 1) / size(workers, 1)))), workers)
-
-    # first pass
-    @sync for c in axes(workers, 1)
-        # Dagger.@spawn scope=workers_scope label_wise_sum_ak_transposed!(Dtraces.chunks[c], Dlabels.chunks[c], Dagger.@spawn(dropdims(_sums.chunks[c], dims=1)), Dagger.@spawn(dropdims(_totals.chunks[c], dims=1)))
-        Dagger.@spawn scope=workers_scope label_wise_sum_ak_transposed!(Dtraces.chunks[c], Dlabels.chunks[c], _sums, _totals)
-    end
-    acc._sums .= .+(map(shard->fetch(Dagger.@spawn copy(shard)), _sums)...)
-    acc._totals .= .+(map(shard->fetch(Dagger.@spawn copy(shard)), _totals)...)
-    # acc._sums .= dropdims(.+(fetch.(_sums.chunks)...), dims=1)  # same for each run
-    # acc._totals .= dropdims(.+(fetch.(_totals.chunks)...), dims=1)  # same for each run
-    println("finished 1st pass")
-
-    # find means
-    @. acc._moments[:, 1, :] = acc._sums / acc._totals
-    _moments = Dagger.@shard workers=workers copy(acc._moments)
-    # @sync for c in axes(workers, 1)        
-    #     # Sometimes throws a concurrency violation due to concurrent resizing of vector?
-    #     @assert size(_moments[c, :, 1, :]) == size(view(acc._moments, :, 1, :))
-    #     Dagger.@spawn _moments[c, :, 1, :] = view(acc._moments, :, 1, :)
-    # end
-    println("finished copying _moments")
-
-    # second pass
-    @sync for c in axes(workers, 1)
-        # Dagger.@spawn scope=workers_scope centered_sum_kern_ak_transposed!(Dagger.@spawn(dropdims(_moments.chunks[c], dims=1)), Dtraces.chunks[c], Dlabels.chunks[c])
-        Dagger.@spawn scope=workers_scope centered_sum_kern_ak_transposed!(_moments, Dtraces.chunks[c], Dlabels.chunks[c])
-    end
-    acc._moments[:, 2:end, :] .= .+(map(shard->fetch(Dagger.@spawn copy(shard)), _moments)...)[:, 2:end, :]  # not the same each run
-    # acc._moments[:, 2:end, :] .= dropdims(.+(fetch.(_moments.chunks)...), dims=1)[:, 2:end, :]
-    println("finished 2nd pass")
-
-    # merge centered sum estimations
-    init_ls = acc.totals .== 0
-    update_ls = acc.totals .!= 0
-    if any(init_ls)
-        @inbounds acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
-        @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
-    end
-    if any(update_ls)
-        throw(ErrorException("Not supposed to happen!"))
-    end
-    println("finished merge")
-    return nothing
-end
-
 # First pass in two pass approach
 function centered_sum_update_pass_1!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
     @boundscheck begin
@@ -618,94 +453,6 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarra
     acc.totals .= acc._totals
 
     return
-end
-
-# Works!
-# would be better if the mapping of trace / label chunks to workers was explicit, so
-# that the structs could be allocated on the right workers and not moved.
-# Also, I need to figure out how to scope calles to thread 1 of each worker without the output being 0
-function get_moments_dagger(traces::DArray{Tt}, labels::DArray{Tl}, order, nl, Tarray::Type)::Tuple{Tarray, Tarray, DArray} where {Tt<:AbstractFloat, Tl<:Integer}
-    @boundscheck begin
-        checkbounds(traces.chunks, size(labels.chunks, 1), 1)
-        checkbounds(labels.chunks, size(traces.chunks, 1), 1)
-    end
-
-    # allocate output
-    mout = Tarray(zeros(Tt, size(labels, 2), nl, order, size(traces, 2)))
-    tout = Tarray(zeros(UInt32, size(labels, 2), nl))
-
-    # set up distributed intermediate values
-    chunk_idxs = (size(traces.chunks)..., size(labels.chunks, 2))
-    MA = Array{Union{UniVarMomentsAccVecLabel{Tt, Tl, Tarray, labels.partitioning.blocksize[2]}, Nothing}, 3}(nothing, chunk_idxs...)
-    cart_chunk_idxs = CartesianIndices(MA)
-    M = DArray(MA, Blocks(1, 1, 1))
-
-    # initialize structs
-    @sync for idx in cart_chunk_idxs
-        Dagger.@spawn M[idx] = UniVarMomentsAccVecLabel{Tt, Tl, Tarray, labels.partitioning.blocksize[2]}(order, size(traces.subdomains[idx.I[1:2]...], 2), nl)
-    end
-
-    # 1st pass
-    @sync for chunk_idx in cart_chunk_idxs
-        Dagger.@spawn centered_sum_update_pass_1!(M[chunk_idx], traces.chunks[chunk_idx.I[1:2]...], labels.chunks[chunk_idx[1], chunk_idx[3]])
-    end
-
-    # reduce results and copy back to the other workers
-    @sync for i_chunk in axes(M, 1)
-        @sync for j_chunk in axes(M, 2)
-            if i_chunk == 1
-                continue
-            end
-            for l_chunk in axes(M, 3)
-                if j_chunk == 1
-                    Dagger.@spawn broadcast!(+, M[1, j_chunk, l_chunk]._totals, M[1, j_chunk, l_chunk]._totals, M[i_chunk, j_chunk, l_chunk]._totals)
-                end
-                Dagger.@spawn broadcast!(+, M[1, j_chunk, l_chunk]._sums, M[1, j_chunk, l_chunk]._sums, M[i_chunk, j_chunk, l_chunk]._sums)
-            end
-        end
-    end
-    @sync for i_chunk in axes(M, 1)
-        for j_chunk in axes(M, 2)
-            for l_chunk in axes(M, 3)
-                Dagger.@spawn copyto!(M[i_chunk, j_chunk, l_chunk]._totals, M[1, 1, l_chunk]._totals)
-                Dagger.@spawn copyto!(M[i_chunk, j_chunk, l_chunk]._sums, M[1, j_chunk, l_chunk]._sums)
-            end
-        end
-    end
-
-    # find means + 2nd pass
-    @sync for chunk_idx in cart_chunk_idxs
-        Dagger.@spawn centered_sum_update_pass_2!(M[chunk_idx], traces.chunks[chunk_idx.I[1:2]...], labels.chunks[chunk_idx[1], chunk_idx[3]])
-    end
-
-    # reduce final results
-    @sync for i_chunk in axes(M, 1)
-        @sync for j_chunk in axes(M, 2)
-            if i_chunk == 1
-                continue
-            end
-            for l_chunk in axes(M, 3)
-                Mview = 2:size(M[1, j_chunk, l_chunk].moments, 3)
-                Mout = view(M[1, j_chunk, l_chunk].moments, :, :, Mview, :)
-                Min = view(M[i_chunk, j_chunk, l_chunk].moments, :, :, Mview, :)
-                Dagger.@spawn broadcast!(+, Mout, Mout, Min)
-            end
-        end
-    end
-
-    @sync for j_chunk in axes(M, 2)
-        for l_chunk in axes(M, 3)
-            l_idxs = labels.subdomains[1, l_chunk].indexes[2]
-            t_idxs = traces.subdomains[1, j_chunk].indexes[2]
-
-            if j_chunk == 1
-                Dagger.@spawn copyto!(view(tout, l_idxs, :), fetch(M[1, j_chunk, l_chunk]).totals)
-            end
-            Dagger.@spawn copyto!(view(mout, l_idxs, :, :, t_idxs), fetch(M[1, j_chunk, l_chunk]).moments)
-        end
-    end
-
-    return mout, tout, M
 end
 
 function centered_sum_update!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
