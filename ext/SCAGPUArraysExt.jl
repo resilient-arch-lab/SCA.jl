@@ -4,7 +4,6 @@ using SCA
 using SCA.Moments: UniVarMomentsAcc, UniVarMomentsAccVecLabel, label_wise_sum_ak!, centered_sum_kern_ak_transposed!, centered_sum_kern_ak!, merge_from_ak!
 using GPUArrays
 using KernelAbstractions
-using Dagger
 
 import SCA.Moments: centered_sum_update_pass_1!, centered_sum_update_pass_2!
 
