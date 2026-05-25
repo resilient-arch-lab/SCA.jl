@@ -639,6 +639,7 @@ function get_moments_dagger(traces::DArray{Tt}, labels::DArray{Tl}, order, nl, T
     MA = Array{Union{UniVarMomentsAccVecLabel{Tt, Tl, Tarray, labels.partitioning.blocksize[2]}, Nothing}, 3}(nothing, chunk_idxs...)
     cart_chunk_idxs = CartesianIndices(MA)
     M = DArray(MA, Blocks(1, 1, 1))
+    fetch(M)  # make sure all operations on M are done before continuing
 
     # initialize structs
     @sync for idx in cart_chunk_idxs
