@@ -639,19 +639,16 @@ function get_moments_dagger(traces::DArray{Tt}, labels::DArray{Tl}, order, nl, T
     MA = Array{Union{UniVarMomentsAccVecLabel{Tt, Tl, Tarray, labels.partitioning.blocksize[2]}, Nothing}, 3}(nothing, chunk_idxs...)
     cart_chunk_idxs = CartesianIndices(MA)
     M = DArray(MA, Blocks(1, 1, 1))
-    fetch(M)  # make sure all operations on M are done before continuing
 
     # initialize structs
     @sync for idx in cart_chunk_idxs
         Dagger.@spawn M[idx] = UniVarMomentsAccVecLabel{Tt, Tl, Tarray, labels.partitioning.blocksize[2]}(order, size(traces.subdomains[idx.I[1:2]...], 2), nl)
     end
-    fetch(M)
 
     # 1st pass
     @sync for chunk_idx in cart_chunk_idxs
         Dagger.@spawn centered_sum_update_pass_1!(M[chunk_idx], traces.chunks[chunk_idx.I[1:2]...], labels.chunks[chunk_idx[1], chunk_idx[3]])
     end
-    fetch(M)
 
     # reduce results and copy back to the other workers
     @sync for i_chunk in axes(M, 1)
@@ -667,7 +664,6 @@ function get_moments_dagger(traces::DArray{Tt}, labels::DArray{Tl}, order, nl, T
             end
         end
     end
-    fetch(M)
     @sync for i_chunk in axes(M, 1)
         for j_chunk in axes(M, 2)
             for l_chunk in axes(M, 3)
@@ -676,13 +672,11 @@ function get_moments_dagger(traces::DArray{Tt}, labels::DArray{Tl}, order, nl, T
             end
         end
     end
-    fetch(M)
 
     # find means + 2nd pass
     @sync for chunk_idx in cart_chunk_idxs
         Dagger.@spawn centered_sum_update_pass_2!(M[chunk_idx], traces.chunks[chunk_idx.I[1:2]...], labels.chunks[chunk_idx[1], chunk_idx[3]])
     end
-    fetch(M)
 
     # reduce final results
     @sync for i_chunk in axes(M, 1)
@@ -710,9 +704,8 @@ function get_moments_dagger(traces::DArray{Tt}, labels::DArray{Tl}, order, nl, T
             Dagger.@spawn copyto!(view(mout, l_idxs, :, :, t_idxs), fetch(M[1, j_chunk, l_chunk]).moments)
         end
     end
-    fetch(M)
 
-    return mout, tout, M
+    return mout, tout, fetch(M)
 end
 
 function centered_sum_update!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
