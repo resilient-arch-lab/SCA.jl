@@ -69,28 +69,6 @@ struct UniVarMomentsAccDagger2{Tt<:AbstractFloat, Tl<:Integer}
     end
 end
 
-# right now this is slower than running a UniVarMomentsAccs for each label element
-struct UniVarMomentsAccNDLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
-    totals::Tarray  # Tarray is a typevar, which you can't parameterize directly 
-    moments::Tarray
-    order::UInt
-    ns::UInt
-    nl::UInt
-    label_shape::NTuple{LD}
-    _totals::Tarray
-    _moments::Tarray
-    _sums::Tarray
-
-    function UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}(order, ns, nl, label_shape) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD} 
-        totals = fill!(Tarray{UInt32, 1+LD}(undef, label_shape..., nl), 0)
-        moments = fill!(Tarray{Tt, 3+LD}(undef, label_shape..., nl, order, ns), 0)
-        _totals = similar(totals)
-        _moments = similar(moments)
-        _sums = Tarray{Tt, 2+LD}(undef, label_shape..., nl, ns)
-        new{Tt, Tl, Tarray, LD}(totals, moments, order, ns, nl, label_shape, _totals, _moments, _sums)
-    end
-end
-
 struct UniVarMomentsAccVecLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
     totals::Tarray
     moments::Tarray
@@ -425,50 +403,7 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
     return nothing
 end
 
-# This is still horrendously slow on CPU, must fix. 
-# No overhead compared to scalar labels on GPUs though
-function centered_sum_update!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
-    # Initialize intermediate values
-    fill!(acc._sums, 0)
-    fill!(acc._moments, 0)
-    fill!(acc._totals, 0)
-
-    if get_backend(traces) != get_backend(acc._sums) || get_backend(labels) != get_backend(acc._sums)
-        print("backend mismatch")
-        traces = Tarray(traces)
-        labels = Tarray(labels)
-    end
-
-    @time "label_wise_sum_ak!" label_wise_sum_ak_transposed!(traces, labels, acc._sums, acc._totals)
-
-    # find means
-    @time "means" @. acc._moments[:, :, 1, :] = acc._sums / acc._totals
-
-    # compute centered sums
-    @time "centered_sum_kern_ak!" centered_sum_kern_ak!(acc._moments, traces, labels)  # 15s
-    # @time "centered_sum_kern_ak!" for l in axes(labels, 2)
-    # centered_sum_kern_ak_transposed!(view(acc._moments, l, :, :, :), traces, view(labels, :, l))
-    # end
-
-    # merge centered sum estimations
-    @time "merge" begin
-        init_ls = acc.totals .== 0
-        update_ls = acc.totals .!= 0
-        if any(init_ls)
-            @inbounds acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
-            # @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
-        end
-        if any(update_ls)
-            for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
-                merge_from_ak!(view(acc.moments, l, :, :), view(acc.totals, l), view(acc._moments, l, :, :), view(acc._totals, l))
-            end
-            # @inbounds acc.totals[update_ls] .+= acc._totals[update_ls]
-        end
-    end
-end
-
 # There's the potential for shards to be larger than the slice they're correlated with
-
 # Now we assume that each acc struct only has one slice, and that traces / labels are distributed over dim 1 only
 # Shards dont work with datadeps...
 function centered_sum_update!(acc::UniVarMomentsAccDagger2{Tt, Tl}, traces::DArray{Tt, 2}, labels::DArray{Tl, 1}) where {Tt<:AbstractFloat, Tl<:Integer}
@@ -778,70 +713,6 @@ end
 
 function merge_from!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, acc_new::UniVarMomentsAcc{Tt, Tl, Tarray}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     merge_from!(acc, acc_new.moments, acc_new.totals)
-end
-
-function merge_from!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, 1}, M_new::Array{Tt, 4}, totals_new::Array{UInt32, 2}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    checkbounds(M_new, size(acc.moments)...)
-    checkbounds(totals_new, size(acc.totals)...)
-    
-    if all(totals_new .== 0)
-        return nothing
-    end
-    if all(acc.totals .== 0)
-        # If this is the first estimation, the acc values can be updated directly
-        acc.moments .= M_new
-        acc.totals .= totals_new
-        return nothing
-    end
-
-    kern_order = Int(acc.order)
-
-    @inbounds for l in axes(acc.totals, 1)
-        δ = view(M_new, l, :, 1, :) - view(acc.moments, l, :, 1, :)
-        δ_pows = fill!(Tarray{Tt, 2}(undef, acc.order+1, acc.ns), 0)
-        M_old_l, totals_old_l = view(acc.moments, l, :, :, :), view(acc.totals, l, :)
-        totals_new_l = view(totals_new, l, :)
-        totals_result_l = totals_old_l .+ totals_new_l
-
-        for l_idx in axes(totals_old_l, 1)
-            M_old_i = view(M_old_l, l_idx, :, :)
-            M_new_i = view(M_new, l, l_idx, :, :)
-
-            if totals_new_l[l_idx] == 0
-                continue
-            end
-            if totals_old_l[l_idx] == 0
-                M_old_i .= M_new_i
-                totals_old_l[l_idx] = totals_new_l[l_idx]
-                continue
-            end
-
-            for j in axes(δ_pows, 1)
-                view(δ_pows, j, :) .= view(δ, l_idx, :).^j
-            end
-            for p in kern_order:-1:2
-                (as_input1, to_update1) = view(M_old_i, 1:p-1, :), view(M_old_i, p, :)
-                (as_input2, to_update2) = view(M_new_i, 1:p-1, :), view(M_new_i, p, :)
-
-                to_update1 .+= to_update2
-
-                for k in 1:p-2
-                    δ_pows_k = @views δ_pows[k, :]
-                    cst = binomial(k, p)
-                    tmp2 = view(as_input1, p-k, :) .* ((-totals_new_l[l_idx]/totals_result_l[l_idx]).^k)
-                    tmp3 = view(as_input2, p-k, :) .* ((totals_old_l[l_idx]/totals_result_l[l_idx]).^k)
-                    to_update1 .+= (δ_pows_k .* cst) .* (tmp2 .+ tmp3)
-                end
-                tmp = (1/(totals_new_l[l_idx]^(p-1))) - ((-1/totals_old_l[l_idx])^(p-1))
-                tmp *= ((totals_old_l[l_idx] * totals_new_l[l_idx])/totals_result_l[l_idx])^p
-
-                to_update1 .+= δ_pows[p, :] .* tmp
-            end
-            view(M_old_i, 1, :) .+= (view(δ, l_idx, :) .* (totals_new_l[l_idx]/totals_result_l[l_idx]))  # update mean seperately
-        end
-        totals_old_l .= totals_result_l
-    end
-    return nothing
 end
 
 # Merge a single label estimation
