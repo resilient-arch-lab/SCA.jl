@@ -38,17 +38,6 @@ mutable struct SNRMoments{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     end
 end
 
-mutable struct SNRMomentsNDLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
-    moments::Moments.UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}
-    nl::Int
-    ns::Int
-
-    function SNRMomentsNDLabel{Tt, Tl, Tarray, LD}(ns::Int, nl::Int, label_shape) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
-        moments = Moments.UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}(2, ns, nl, label_shape)
-        new{Tt, Tl, Tarray, LD}(moments, nl, ns)
-    end
-end
-
 mutable struct SNRMomentsChunked{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     chunksize::NTuple{2, Int}  # chunks might not be of exactly `chunksize` dim
     chunk_map::Dict{UnitRange, SNRMoments{Tt, Tl, Tarray}}
