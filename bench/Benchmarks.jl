@@ -149,18 +149,26 @@ function bench_Moments_VecLabel_scaling(output_name::String, orders::Vector{Int}
     end
 
     for (order, ns, nt) in Iterators.product(orders, Ns, Nt)
+        local bench_results
         println("Benching order=$(order), ns=$(ns), nt=$(nt)")
-        bench_results = bench_Moments_VecLabel(TArray, order, ns, nt)
-        
-        push!(results, [device, order, ns, nt, "1 scalar label", StatsBase.mean(bench_results["Centered Sum Update, 1 scalar label"].times)*1e-9, bench_results["Centered Sum Update, 1 scalar label"].memory]; promote=true)
-        push!(results, [device, order, ns, nt, "8 scalar label", StatsBase.mean(bench_results["Centered Sum Update, 8 scalar label"].times)*1e-9, bench_results["Centered Sum Update, 8 scalar label"].memory]; promote=true)
-        # push!(results, [device, order, ns, nt, "vec 1 label", StatsBase.mean(bench_results["Centered Sum Update, vec 1 label"].times)*1e-9, bench_results["Centered Sum Update, vec 1 label"].memory]; promote=true)
-        push!(results, [device, order, ns, nt, "vec 4 label", StatsBase.mean(bench_results["Centered Sum Update, vec 4 label"].times)*1e-9, bench_results["Centered Sum Update, vec 4 label"].memory]; promote=true)
-        push!(results, [device, order, ns, nt, "vec 8 label", StatsBase.mean(bench_results["Centered Sum Update, vec 8 label"].times)*1e-9, bench_results["Centered Sum Update, vec 8 label"].memory]; promote=true)
-        push!(results, [device, order, ns, nt, "vec 16 label", StatsBase.mean(bench_results["Centered Sum Update, vec 16 label"].times)*1e-9, bench_results["Centered Sum Update, vec 16 label"].memory]; promote=true)
+        try
+            bench_results = bench_Moments_VecLabel(TArray, order, ns, nt)
+        catch e
+            if isa(e, OutOfMemoryError)
+                println("Memory error, trying to recover")
+            else
+                throw(e)
+            end
+        else
+            CSV.write("bench/results/$(output_name).csv", Tables.table([device order ns nt "1 scalar label" StatsBase.mean(bench_results["Centered Sum Update, 1 scalar label"].times)*1e-9 bench_results["Centered Sum Update, 1 scalar label"].memory]); append=true)
+            CSV.write("bench/results/$(output_name).csv", Tables.table([device order ns nt "8 scalar label" StatsBase.mean(bench_results["Centered Sum Update, 8 scalar label"].times)*1e-9 bench_results["Centered Sum Update, 8 scalar label"].memory]); append=true)
+            CSV.write("bench/results/$(output_name).csv", Tables.table([device order ns nt "4 vec label" StatsBase.mean(bench_results["Centered Sum Update, vec 4 label"].times)*1e-9 bench_results["Centered Sum Update, vec 4 label"].memory]); append=true)
+            CSV.write("bench/results/$(output_name).csv", Tables.table([device order ns nt "8 vec label" StatsBase.mean(bench_results["Centered Sum Update, vec 8 label"].times)*1e-9 bench_results["Centered Sum Update, vec 8 label"].memory]); append=true)
+            CSV.write("bench/results/$(output_name).csv", Tables.table([device order ns nt "16 vec label" StatsBase.mean(bench_results["Centered Sum Update, vec 16 label"].times)*1e-9 bench_results["Centered Sum Update, vec 16 label"].memory]); append=true)
+        end
     end
 
-    CSV.write("bench/results/$(output_name).csv", results)
+    # CSV.write("bench/results/$(output_name).csv", results)
 end
 
 # minimal memory overhead
