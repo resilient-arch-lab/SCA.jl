@@ -133,7 +133,7 @@ function bench_Moments_VecLabel(TArray::Type = Array, order::Int = 2, ns::Int = 
     run(bench_suite; verbose = true, seconds = 5)
 end
 
-function bench_Moments_VecLabel_scaling(orders::Vector{Int}, Ns::Vector{Int}, Nt::Vector{Int}, TArray::Type = Array)
+function bench_Moments_VecLabel_scaling(output_name::String, orders::Vector{Int}, Ns::Vector{Int}, Nt::Vector{Int}, TArray::Type = Array)
     results = DataFrame(
         "device" => "CPU", 
         "order" => 2, 
@@ -160,7 +160,7 @@ function bench_Moments_VecLabel_scaling(orders::Vector{Int}, Ns::Vector{Int}, Nt
         push!(results, [device, order, ns, nt, "vec 16 label", StatsBase.mean(bench_results["Centered Sum Update, vec 16 label"].times)*1e-9, bench_results["Centered Sum Update, vec 16 label"].memory]; promote=true)
     end
 
-    CSV.write("bench/results/result-VecLabel.csv", results)
+    CSV.write("bench/results/$(output_name).csv", results)
 end
 
 # minimal memory overhead
