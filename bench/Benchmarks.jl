@@ -115,7 +115,7 @@ function bench_Moments_VecLabel(TArray::Type = Array, order::Int = 2, ns::Int = 
     t = TArray(rand(Float32, nt, ns))
     l = TArray(rand(UInt8, nt, 16))
     m1 = Moments.UniVarMomentsAcc{Float32, UInt8, TArray}(order, ns, 256)
-    m2 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, TArray, 1}(order, ns, 256)
+    # m2 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, TArray, 1}(order, ns, 256)  # not working
     m3 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, TArray, 4}(order, ns, 256)
     m4 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, TArray, 8}(order, ns, 256)
     m5 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, TArray, 16}(order, ns, 256)
@@ -139,7 +139,7 @@ function bench_Moments_VecLabel_scaling(orders::Vector{Int}, Ns::Vector{Int}, Nt
         "order" => 2, 
         "# samples" => 0, 
         "# traces" => 0,
-        "type" => "missing",
+        "type" => "...",
         "time" => 0.0, 
         "memory" => 0
     )
@@ -148,7 +148,6 @@ function bench_Moments_VecLabel_scaling(orders::Vector{Int}, Ns::Vector{Int}, Nt
         device = "CPU"
     end
 
-    iteration = 1
     for (order, ns, nt) in Iterators.product(orders, Ns, Nt)
         println("Benching order=$(order), ns=$(ns), nt=$(nt)")
         bench_results = bench_Moments_VecLabel(TArray, order, ns, nt)
@@ -159,8 +158,6 @@ function bench_Moments_VecLabel_scaling(orders::Vector{Int}, Ns::Vector{Int}, Nt
         push!(results, [device, order, ns, nt, "vec 4 label", StatsBase.mean(bench_results["Centered Sum Update, vec 4 label"].times)*1e-9, bench_results["Centered Sum Update, vec 4 label"].memory]; promote=true)
         push!(results, [device, order, ns, nt, "vec 8 label", StatsBase.mean(bench_results["Centered Sum Update, vec 8 label"].times)*1e-9, bench_results["Centered Sum Update, vec 8 label"].memory]; promote=true)
         push!(results, [device, order, ns, nt, "vec 16 label", StatsBase.mean(bench_results["Centered Sum Update, vec 16 label"].times)*1e-9, bench_results["Centered Sum Update, vec 16 label"].memory]; promote=true)
-
-        iteration += 1
     end
 
     CSV.write("bench/results/result-VecLabel.csv", results)
