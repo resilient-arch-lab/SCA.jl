@@ -1,4 +1,4 @@
-Device,Order,# Samples,# Traces,Label size,Time (s)
+Device,Order,NSamples,NTraces,NLabels,Time
 GPU,2,100,10000,2,0.01286
 GPU,4,100,10000,2,0.02785
 GPU,8,100,10000,2,0.05152
