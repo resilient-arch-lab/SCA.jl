@@ -145,7 +145,7 @@ function bench_Moments_VecLabel2(TArray::Type = Array, order::Int = 2, ns::Int =
     run(bench_suite; verbose = true, seconds = 5)
 end
 
-# test_1_wrapper("A5000-atomic-results", [2, 4, 8, 16, 32, 64], [100, 500, 1000], [10000, 20000, 50000, 100000], [2, 4, 8, 16, 32, 64, 128])
+# bench_Moments_VecLabel_scaling("threadripper-results-2", [2, 8, 32, 64], [100, 500, 1000], [10000, 20000, 50000, 100000], [4, 16, 32, 64, 128])
 function bench_Moments_VecLabel_scaling(output_name::String, orders::Vector{Int}, Ns::Vector{Int}, Nt::Vector{Int}, lsizes::Vector{Int}, TArray::Type = Array)
     if TArray == Array
         device = "CPU"
