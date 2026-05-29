@@ -133,26 +133,29 @@ function bench_Moments_VecLabel(TArray::Type = Array, order::Int = 2, ns::Int = 
     run(bench_suite; verbose = true, seconds = 5)
 end
 
-function bench_Moments_VecLabel_scaling(output_name::String, orders::Vector{Int}, Ns::Vector{Int}, Nt::Vector{Int}, TArray::Type = Array)
-    results = DataFrame(
-        "device" => "CPU", 
-        "order" => 2, 
-        "# samples" => 0, 
-        "# traces" => 0,
-        "type" => "...",
-        "time" => 0.0, 
-        "memory" => 0
-    )
+function bench_Moments_VecLabel2(TArray::Type = Array, order::Int = 2, ns::Int = 1000, nt::Int = 100000, lsize::Int=2)
+    t = TArray(rand(Float32, nt, ns))
+    l = TArray(rand(UInt8, nt, lsize))
+    m3 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, TArray, lsize}(order, ns, 256)
 
+    bench_suite["bench"] = @benchmarkable Moments.centered_sum_update!($m3, $t, $l)
+
+    println("Tuning benchmark parameters")
+    tune!(bench_suite)
+    run(bench_suite; verbose = true, seconds = 5)
+end
+
+# test_1_wrapper("A5000-atomic-results", [2, 4, 8, 16, 32, 64], [100, 500, 1000], [10000, 20000, 50000, 100000], [2, 4, 8, 16, 32, 64, 128])
+function bench_Moments_VecLabel_scaling(output_name::String, orders::Vector{Int}, Ns::Vector{Int}, Nt::Vector{Int}, lsizes::Vector{Int}, TArray::Type = Array)
     if TArray == Array
         device = "CPU"
     end
 
-    for (order, ns, nt) in Iterators.product(orders, Ns, Nt)
+    for (order, ns, nt, lsize) in Iterators.product(orders, Ns, Nt, lsizes)
         local bench_results
         println("Benching order=$(order), ns=$(ns), nt=$(nt)")
         try
-            bench_results = bench_Moments_VecLabel(TArray, order, ns, nt)
+            bench_results = bench_Moments_VecLabel2(TArray, order, ns, nt, lsize)
         catch e
             if isa(e, OutOfMemoryError)
                 println("Memory error, trying to recover")
@@ -160,11 +163,7 @@ function bench_Moments_VecLabel_scaling(output_name::String, orders::Vector{Int}
                 throw(e)
             end
         else
-            CSV.write("bench/results/$(output_name).csv", Tables.table([device order ns nt "1 scalar label" StatsBase.mean(bench_results["Centered Sum Update, 1 scalar label"].times)*1e-9 bench_results["Centered Sum Update, 1 scalar label"].memory]); append=true)
-            CSV.write("bench/results/$(output_name).csv", Tables.table([device order ns nt "8 scalar label" StatsBase.mean(bench_results["Centered Sum Update, 8 scalar label"].times)*1e-9 bench_results["Centered Sum Update, 8 scalar label"].memory]); append=true)
-            CSV.write("bench/results/$(output_name).csv", Tables.table([device order ns nt "4 vec label" StatsBase.mean(bench_results["Centered Sum Update, vec 4 label"].times)*1e-9 bench_results["Centered Sum Update, vec 4 label"].memory]); append=true)
-            CSV.write("bench/results/$(output_name).csv", Tables.table([device order ns nt "8 vec label" StatsBase.mean(bench_results["Centered Sum Update, vec 8 label"].times)*1e-9 bench_results["Centered Sum Update, vec 8 label"].memory]); append=true)
-            CSV.write("bench/results/$(output_name).csv", Tables.table([device order ns nt "16 vec label" StatsBase.mean(bench_results["Centered Sum Update, vec 16 label"].times)*1e-9 bench_results["Centered Sum Update, vec 16 label"].memory]); append=true)
+            CSV.write("bench/results/$(output_name).csv", Tables.table([device order ns nt lsize StatsBase.mean(bench_results["bench"].times)*1e-9 bench_results["bench"].memory]); append=true)
         end
     end
 
