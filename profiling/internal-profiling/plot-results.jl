@@ -80,5 +80,5 @@ function plot_intersection_speedup()
     )
     savefig("profiling/internal-profiling/A5000-speedup-scatter.png")
 
-    a5k_intersection[a5k_intersection[:, :Speedup] .>= 1, :Speedup]
+    a5k_intersection[a5k_intersection[:, :Speedup] .>= 1, :]
 end
