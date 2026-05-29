@@ -288,23 +288,6 @@ end
 
 function centered_sum_kern_ak_atomic!(moments::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     order = size(moments, 3)
-    to_update = @view moments[:, :, 2:end, :]
-    ditr = 2:order
-
-    # @inbounds AK.foraxes(traces, 1) do i
-    #     for j in axes(traces, 2)
-    #         t_i = traces[i, j]
-    #         for l in axes(moments, 1)
-    #             l_i = convert(Int32, labels[i, l]+1)
-    #             t_update = t_i - moments[l, l_i, 1, j]
-    #             pow = t_update
-    #             for d in 2:order
-    #                 pow *= t_update
-    #                 Atomix.@atomic moments[l, l_i, d, j] += pow
-    #             end
-    #         end
-    #     end
-    # end
 
     @inbounds AK.foreachindex(traces) do idx
         (i, j) = CartesianIndices(traces)[idx].I
