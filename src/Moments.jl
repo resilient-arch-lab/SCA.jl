@@ -267,20 +267,23 @@ end
 
 function centered_sum_kern_ak!(moments::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     order = size(moments, 3)
-    to_update = @view moments[:, :, 2:end, :]
-    ditr = 1:size(to_update, 3)
+    itr_view = @view moments[:, 1, 1, :]
 
-    @inbounds AK.foraxes(traces, 2) do j
+    traces_per_thread = 10
+    trace_tiles = tiled_view(traces, (traces_per_thread, size(traces, 2)))
+    ntiles = size(trace_tiles, 1)
+    label_tiles = tiled_view(labels, (traces_per_thread, size(labels, 2)))
+
+    @inbounds AK.foreachindex(itr_view) do idx
+        (l, j) = CartesianIndices(itr_view)[idx].I
         for i in axes(traces, 1)
             t_i = traces[i, j]
-            for l in axes(moments, 1)
-                l_i = convert(Int32, labels[i, l]+1)
-                t_update = t_i - moments[l, l_i, 1, j]
-                pow = t_update
-                for d in ditr
-                    pow *= t_update
-                    to_update[l, l_i, d, j] += pow
-                end
+            l_i = convert(Int32, labels[i, l]+1)
+            t_update = t_i - moments[l, l_i, 1, j]
+            pow = t_update
+            for d in 2:order
+                pow *= t_update
+                moments[l, l_i, d, j] += pow
             end
         end
     end

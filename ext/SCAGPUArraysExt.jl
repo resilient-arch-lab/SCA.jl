@@ -1,7 +1,7 @@
 module SCAGPUArraysExt
 
 using SCA
-using SCA.Moments: UniVarMomentsAcc, UniVarMomentsAccVecLabel, label_wise_sum_ak!, centered_sum_kern_ak_transposed!, centered_sum_kern_ak!, merge_from_ak!
+using SCA.Moments: UniVarMomentsAcc, UniVarMomentsAccVecLabel, label_wise_sum_ak!, centered_sum_kern_ak_transposed!, centered_sum_kern_ak!, centered_sum_kern_ak_atomic!, merge_from_ak!
 using GPUArrays
 using KernelAbstractions
 
@@ -73,7 +73,7 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarra
 
     @. acc._moments[:, :, 1, :] = acc._sums / acc._totals
 
-    centered_sum_kern_ak!(acc._moments, traces, labels)
+    centered_sum_kern_ak_atomic!(acc._moments, traces, labels)
 
     acc.moments .= acc._moments
     acc.totals .= acc._totals

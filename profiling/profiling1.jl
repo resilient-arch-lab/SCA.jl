@@ -20,6 +20,7 @@ function test_2()
     @time "CPU moment update" Moments.centered_sum_update!(m4, t, l[:, 1:4])
 end
 
+# test_1_wrapper("A5000-atomic-results", [2, 4, 8, 16, 32, 64], [100, 500, 1000], [10000, 20000, 50000, 100000], [2, 4, 8, 16, 32, 64, 128])
 function test_1_wrapper(output_name::String, orders::Vector{Int}, Ns::Vector{Int}, Nt::Vector{Int}, lsize::Vector{Int})
     # result_file = open("profiling/internal-profiling/$(output_name).csv", "w")
     
