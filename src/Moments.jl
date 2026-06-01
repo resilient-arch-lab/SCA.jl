@@ -380,8 +380,8 @@ end
 function centered_sum_kern_ak_atomic!(moments::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     order = size(moments, 3)
 
-    @inbounds AK.foreachindex(traces) do idx
-        (i, j) = CartesianIndices(traces)[idx].I
+    @inbounds AK.foreachindex(traces') do idx
+        (j, i) = CartesianIndices((size(traces, 2), size(traces, 1)))[idx].I
         t_i = traces[i, j]
         for l in axes(moments, 1)
             l_i = convert(Int32, labels[i, l]+1)
