@@ -247,6 +247,7 @@ end
 
     j, i = @index(Local, NTuple)
     J, I = @index(Group, NTuple) # block indexes in grid, accounting for tile_size and tiler
+    # @print("(j, i): $((j, i))\t(J, I): $((J, I))\n")  # griddim is right
 
     moments_acc = @localmem Tt (tile_size[3], nl, order, tile_size[2])
     
@@ -256,10 +257,14 @@ end
             j_tile_global_offset =  j + ((j_tile-1)*tile_size[2]) + ((J-1) * tile_size[2]*tiler_size[2])
             t = traces[i_tile_global_offset, j_tile_global_offset]
             for l_tile in 1:tiler_size[3]
+                # @print("(j, i): $((j, i))\t(J, I): $((J, I))\n(itile: $(i_tile), j_tile: $(j_tile), l_tile: $(l_tile)) -- ioff: $(i_tile_global_offset)\tjoff: $(j_tile_global_offset)\n\n")
                 @synchronize()
                 # zero moments_acc
                 for l in 1:acc_labels_per_thread
                     for lidx in 1:tile_size[3]
+                        if i_tile == 1 & j_tile == 1
+                            @print("(j, i): $((j, i))\t(J, I): $((J, I))\tlidx: $(lidx), l: $((l-1)+i), ltile_offset: $((l_tile-1)*tile_size[3] + lidx)\n")
+                        end
                         moments_acc[lidx, (l-1)+i, 1, j] = moments[(l_tile-1)*tile_size[3] + lidx, (l-1)+i, 1, j_tile_global_offset]
                         for d in 2:order
                             moments_acc[lidx, (l-1)+i, d, j] = 0
@@ -270,13 +275,13 @@ end
 
                 # accumulate to moments_acc
                 for lidx in 1:tile_size[3]
-                    l = convert(Int32, labels[i_tile_global_offset, (l_tile-1)*tile_size[3] + lidx]&0xff)
-                    t_update = t - moments_acc[lidx, l, 1, j]
-                    t_power = t_update
+                    # l = convert(Int32, (labels[i_tile_global_offset, (l_tile-1)*tile_size[3] + lidx]+1)&0xff)
+                    # t_update = t - moments_acc[lidx, l, 1, j]
+                    # t_power = t_update
 
                     for d in 2:order
-                        t_power *= t_update
-                        Atomix.@atomic moments_acc[lidx, l, d, j] += t_power
+                        # t_power *= t_update
+                        # Atomix.@atomic moments_acc[lidx, l, d, j] += t_power
                     end
                 end
                 @synchronize()
@@ -285,7 +290,7 @@ end
                 for lidx in 1:tile_size[3]
                     for l in 1:acc_labels_per_thread
                         for d in 2:order
-                            Atomix.@atomic moments[(l_tile-1)*tile_size[3] + lidx, (l-1)+i, d, j_tile_global_offset] += moments_acc[lidx, (l-1)+i, d, j]
+                            # Atomix.@atomic moments[(l_tile-1)*tile_size[3] + lidx, (l-1)+i, d, j_tile_global_offset] += moments_acc[lidx, (l-1)+i, d, j]
                         end
                     end
                 end
@@ -302,22 +307,22 @@ function centered_sum_KA_wrapper!(
     @assert lsize == size(labels, 2) "lsize must equal size of `labels` in second dim"
     # @assert size(traces) == tile_size .* tiler_size
 
-    grid_view = tiled_view(traces, (tile_size[1] * tiler_size[1], tile_size[2] * tiler_size[2]))
-    grid_shape = size(grid_view')
+    kernel_ndrange = (size(traces, 2) ÷ (tiler_size[2]), size(traces, 1) ÷ (tiler_size[1]))
+    block_shape = (tile_size[2], tile_size[1])
     traces_tiles = tiled_view(traces, (tile_size[1], tile_size[2]))
-    trace_tile_sizes = unique(size.([traces_tiles[1, 1] traces_tiles[1, end]; traces_tiles[end, 1] traces_tiles[end, end]]))
+    # trace_tile_sizes = unique(size.([traces_tiles[1, 1] traces_tiles[1, end]; traces_tiles[end, 1] traces_tiles[end, end]]))
     labels_tiles = tiled_view(labels, (tile_size[1], tile_size[3]))
 
     println("tile size: $(tile_size)")
     println("tiler size: $(tiler_size)")
     println("size product: $(tile_size .* tiler_size)")
     println("acc_labels_per_thread: $(acc_labels_per_thread)")
-    println("Kernel grid shape: $(grid_shape)")
-    println("Kernel block shape: $((tile_size[2], tile_size[1]))")
+    println("Kernel ndrange: $(kernel_ndrange)")
+    println("Kernel block shape: $(block_shape)")
 
     dev = get_backend(moments)
-    kernel = centered_sum_kern_KA_2!(dev, (tile_size[2], tile_size[1]))
-    kernel(moments, traces, labels, Val(tile_size), Val(tiler_size), Val(order), Val(lsize), Val(nl), Val(acc_labels_per_thread), ndrange=(grid_shape[1]-1, grid_shape[2]-1))
+    kernel = centered_sum_kern_KA_2!(dev, block_shape, kernel_ndrange)
+    kernel(moments, traces, labels, Val(tile_size), Val(tiler_size), Val(order), Val(lsize), Val(nl), Val(acc_labels_per_thread), ndrange=kernel_ndrange)
     # KernelAbstractions.synchronize(dev)
 end
 

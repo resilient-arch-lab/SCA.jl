@@ -19,9 +19,10 @@ function test1(ntraces::Int, tsize::Int, order::Int, ::Val{lsize}, ldomain::Unit
 
     m = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, CuArray, lsize}(order, tsize, size(ldomain, 1))
     # CUDA.@profile Moments.centered_sum_update!(m, t_dev, l_dev)  # error on thread (1, 40), block (6, 1)
-    CUDA.@profile Moments.centered_sum_KA_wrapper!(m._moments, t_dev, l_dev, 
+    res = CUDA.@profile Moments.centered_sum_KA_wrapper!(m._moments, t_dev, l_dev, 
        Val((64, 4, 1)), Val((2, 16, 16)), Val(8), Val(lsize), Val(256), Val(4))
     # KernelAbstractions.synchronize(get_backend(t_dev))
+    show(res)
 end
 
 # 3050ti (AK kernel): 
