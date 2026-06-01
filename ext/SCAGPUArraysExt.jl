@@ -76,7 +76,7 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarra
     nl = 256
 
     centered_sum_KA_wrapper!(acc._moments, traces, labels, 
-        Val((64, 4, 2)), Val((2, 2, 8)), Val(4), Val(LD), Val(256), Val(4))
+        Val((64, 4, 1)), Val((4, 2, 16)), Val(8), Val(LD), Val(256), Val(4))
     # ::Val{tile_size}, ::Val{tiler_size}, ::Val{order}, ::Val{lsize}, ::Val{nl}, ::Val{acc_labels_per_thread}
 
     acc.moments .= acc._moments

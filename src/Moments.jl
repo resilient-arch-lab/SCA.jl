@@ -252,12 +252,11 @@ end
     
     for i_tile in 1:tiler_size[1]
         for j_tile in 1:tiler_size[2]
-            @synchronize(true)
             i_tile_global_offset =  i + ((i_tile-1)*tile_size[1]) + ((I-1) * tile_size[1]*tiler_size[1])
             j_tile_global_offset =  j + ((j_tile-1)*tile_size[2]) + ((J-1) * tile_size[2]*tiler_size[2])
             t = traces[i_tile_global_offset, j_tile_global_offset]
             for l_tile in 1:tiler_size[3]
-                @synchronize(true)
+                @synchronize()
                 # zero moments_acc
                 for l in 1:acc_labels_per_thread
                     for lidx in 1:tile_size[3]
@@ -267,11 +266,11 @@ end
                         end
                     end
                 end
-                @synchronize(true)
+                @synchronize()
 
                 # accumulate to moments_acc
                 for lidx in 1:tile_size[3]
-                    l = convert(Int32, labels[(i_tile-1)*tile_size[1] + i, (l_tile-1)*tile_size[3] + lidx])
+                    l = convert(Int32, labels[i_tile_global_offset, (l_tile-1)*tile_size[3] + lidx]&0xff)
                     t_update = t - moments_acc[lidx, l, 1, j]
                     t_power = t_update
 
@@ -280,18 +279,17 @@ end
                         Atomix.@atomic moments_acc[lidx, l, d, j] += t_power
                     end
                 end
-                @synchronize(true)
+                @synchronize()
 
                 # atomic_add to global mem
                 for lidx in 1:tile_size[3]
                     for l in 1:acc_labels_per_thread
                         for d in 2:order
-                            Atomix.@atomic moments[(l_tile-1)*tile_size[3] + lidx, l+i, d, j_tile_global_offset] += moments_acc[lidx, l, d, j]
+                            Atomix.@atomic moments[(l_tile-1)*tile_size[3] + lidx, (l-1)+i, d, j_tile_global_offset] += moments_acc[lidx, (l-1)+i, d, j]
                         end
                     end
                 end
             end
-            @synchronize(true)
         end
     end
 end
