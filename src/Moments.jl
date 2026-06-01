@@ -300,10 +300,12 @@ function centered_sum_KA_wrapper!(
     
     @assert order == size(moments, 3) "order must equal the size of `moments` in third dim"
     @assert lsize == size(labels, 2) "lsize must equal size of `labels` in second dim"
+    # @assert size(traces) == tile_size .* tiler_size
 
     grid_view = tiled_view(traces, (tile_size[1] * tiler_size[1], tile_size[2] * tiler_size[2]))
     grid_shape = size(grid_view')
     traces_tiles = tiled_view(traces, (tile_size[1], tile_size[2]))
+    trace_tile_sizes = unique(size.([traces_tiles[1, 1] traces_tiles[1, end]; traces_tiles[end, 1] traces_tiles[end, end]]))
     labels_tiles = tiled_view(labels, (tile_size[1], tile_size[3]))
 
     println("tile size: $(tile_size)")
