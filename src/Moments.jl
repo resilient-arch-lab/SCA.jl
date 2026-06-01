@@ -11,9 +11,11 @@ using .Utils
 
 using Random
 using KernelAbstractions, Atomix
+using KernelAbstractions.Extras.LoopInfo: @unroll
 import AcceleratedKernels as AK
 using Base: convert
 using FixedSizeArrays
+using StaticArrays
 
 # TODO: I'm not convinced this actually needs to be parameterized on the array type, and it
 # does complicate things slightly.
@@ -229,6 +231,94 @@ end
         @inbounds pow[i, j] *= t[i, j]
         @inbounds Atomix.@atomic moments[l_i, d, J] += pow[i, j]
     end
+end
+
+# Use shared memory reduction
+#   label chunk size must kept small enough to not exploade shared memory usage from the shared `moments` tile
+#   moments_acc shape: tile_size[3], nl, order, tile_size[2]
+#   block shape (threads contiguous on dim x): (tile_size[2], 256 // tile_size[2] = tile_size[1])
+#   tile_size[3] must be divisible by tile_size[1] and acc_labels_per_thread = tile_size[3] // tile_size[1]
+#       This only works if tile_size[1] < tile_size[3], which is not true for reasonably small tile_size[2]
+#   alternative: nl must be divisible by tile_size[1], and acc_labels_per_thread = nl // tile_size[1]
+#       error on thread (65, 1), block (127, 1)
+@kernel function centered_sum_kern_KA_2!(
+    moments::AbstractArray{Tt, 4}, @Const(traces::AbstractMatrix{Tt}), @Const(labels::AbstractMatrix{Tl}),
+    ::Val{tile_size}, ::Val{tiler_size}, ::Val{order}, ::Val{lsize}, ::Val{nl}, ::Val{acc_labels_per_thread}) where {Tt<:AbstractFloat, Tl<:Integer, tile_size, tiler_size, order, lsize, nl, acc_labels_per_thread}
+
+    j, i = @index(Local, NTuple)
+    J, I = @index(Group, NTuple) # block indexes in grid, accounting for tile_size and tiler
+
+    moments_acc = @localmem Tt (tile_size[3], nl, order, tile_size[2])
+    
+    for i_tile in 1:tiler_size[1]
+        for j_tile in 1:tiler_size[2]
+            @synchronize(true)
+            i_tile_global_offset =  i + ((i_tile-1)*tile_size[1]) + ((I-1) * tile_size[1]*tiler_size[1])
+            j_tile_global_offset =  j + ((j_tile-1)*tile_size[2]) + ((J-1) * tile_size[2]*tiler_size[2])
+            t = traces[i_tile_global_offset, j_tile_global_offset]
+            for l_tile in 1:tiler_size[3]
+                @synchronize(true)
+                # zero moments_acc
+                for l in 1:acc_labels_per_thread
+                    for lidx in 1:tile_size[3]
+                        moments_acc[lidx, (l-1)+i, 1, j] = moments[(l_tile-1)*tile_size[3] + lidx, (l-1)+i, 1, j_tile_global_offset]
+                        for d in 2:order
+                            moments_acc[lidx, (l-1)+i, d, j] = 0
+                        end
+                    end
+                end
+                @synchronize(true)
+
+                # accumulate to moments_acc
+                for lidx in 1:tile_size[3]
+                    l = convert(Int32, labels[(i_tile-1)*tile_size[1] + i, (l_tile-1)*tile_size[3] + lidx])
+                    t_update = t - moments_acc[lidx, l, 1, j]
+                    t_power = t_update
+
+                    for d in 2:order
+                        t_power *= t_update
+                        Atomix.@atomic moments_acc[lidx, l, d, j] += t_power
+                    end
+                end
+                @synchronize(true)
+
+                # atomic_add to global mem
+                for lidx in 1:tile_size[3]
+                    for l in 1:acc_labels_per_thread
+                        for d in 2:order
+                            Atomix.@atomic moments[(l_tile-1)*tile_size[3] + lidx, l+i, d, j_tile_global_offset] += moments_acc[lidx, l, d, j]
+                        end
+                    end
+                end
+            end
+            @synchronize(true)
+        end
+    end
+end
+
+function centered_sum_KA_wrapper!(
+    moments::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}, 
+    ::Val{tile_size}, ::Val{tiler_size}, ::Val{order}, ::Val{lsize}, ::Val{nl}, ::Val{acc_labels_per_thread}) where {Tt<:AbstractFloat, Tl<:Integer, tile_size, tiler_size, order, lsize, nl, acc_labels_per_thread}
+    
+    @assert order == size(moments, 3) "order must equal the size of `moments` in third dim"
+    @assert lsize == size(labels, 2) "lsize must equal size of `labels` in second dim"
+
+    grid_view = tiled_view(traces, (tile_size[1] * tiler_size[1], tile_size[2] * tiler_size[2]))
+    grid_shape = size(grid_view')
+    traces_tiles = tiled_view(traces, (tile_size[1], tile_size[2]))
+    labels_tiles = tiled_view(labels, (tile_size[1], tile_size[3]))
+
+    println("tile size: $(tile_size)")
+    println("tiler size: $(tiler_size)")
+    println("size product: $(tile_size .* tiler_size)")
+    println("acc_labels_per_thread: $(acc_labels_per_thread)")
+    println("Kernel grid shape: $(grid_shape)")
+    println("Kernel block shape: $((tile_size[2], tile_size[1]))")
+
+    dev = get_backend(moments)
+    kernel = centered_sum_kern_KA_2!(dev, (tile_size[2], tile_size[1]))
+    kernel(moments, traces, labels, Val(tile_size), Val(tiler_size), Val(order), Val(lsize), Val(nl), Val(acc_labels_per_thread), ndrange=(grid_shape[1]-1, grid_shape[2]-1))
+    # KernelAbstractions.synchronize(dev)
 end
 
 function centered_sum_kern_ak!(moments::AbstractArray{Tt, 3}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
