@@ -594,7 +594,7 @@ function get_moments_dagger(traces::DArray{Tt}, labels::DArray{Tl}, order, nl, T
             for l_chunk in axes(M, 3)
                 if j_chunk == 1
                     Dagger.@spawn broadcast!(+, M[1, j_chunk, l_chunk]._totals, M[1, j_chunk, l_chunk]._totals, M[i_chunk, j_chunk, l_chunk]._totals)
-                    Dagger.@spawn copyto!(M[1, j_chunk, l_chunk]._totals, Dagger.@spawn)
+                    # Dagger.@spawn copyto!(M[1, j_chunk, l_chunk]._totals, Dagger.@spawn)
                 end
                 Dagger.@spawn broadcast!(+, M[1, j_chunk, l_chunk]._sums, M[1, j_chunk, l_chunk]._sums, M[i_chunk, j_chunk, l_chunk]._sums)
             end
