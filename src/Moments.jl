@@ -257,14 +257,13 @@ end
             j_tile_global_offset =  j + ((j_tile-1)*tile_size[2]) + ((J-1) * tile_size[2]*tiler_size[2])
             t = traces[i_tile_global_offset, j_tile_global_offset]
             for l_tile in 1:tiler_size[3]
-                # @print("(j, i): $((j, i))\t(J, I): $((J, I))\n(itile: $(i_tile), j_tile: $(j_tile), l_tile: $(l_tile)) -- ioff: $(i_tile_global_offset)\tjoff: $(j_tile_global_offset)\n\n")
+                if (@index(Local, Linear) == 29) & (@index(Group, Linear) == 16)
+                    @print("i_tile: $(i_tile)\t j_tile: $(j_tile)\t l_tile: $(l_tile)\t(j, i): $((j, i))\t(J, I): $((J, I))\n")
+                end
                 @synchronize()
                 # zero moments_acc
                 for l in 1:acc_labels_per_thread
                     for lidx in 1:tile_size[3]
-                        if i_tile == 1 & j_tile == 1
-                            @print("(j, i): $((j, i))\t(J, I): $((J, I))\tlidx: $(lidx), l: $((l-1)+i), ltile_offset: $((l_tile-1)*tile_size[3] + lidx)\n")
-                        end
                         moments_acc[lidx, (l-1)+i, 1, j] = moments[(l_tile-1)*tile_size[3] + lidx, (l-1)+i, 1, j_tile_global_offset]
                         for d in 2:order
                             moments_acc[lidx, (l-1)+i, d, j] = 0
@@ -275,13 +274,14 @@ end
 
                 # accumulate to moments_acc
                 for lidx in 1:tile_size[3]
-                    # l = convert(Int32, (labels[i_tile_global_offset, (l_tile-1)*tile_size[3] + lidx]+1)&0xff)
-                    # t_update = t - moments_acc[lidx, l, 1, j]
-                    # t_power = t_update
-
-                    for d in 2:order
-                        # t_power *= t_update
-                        # Atomix.@atomic moments_acc[lidx, l, d, j] += t_power
+                    l = convert(Int32, (labels[i_tile_global_offset, (l_tile-1)*tile_size[3] + lidx]+1)&0xff)
+                    if l <= size(moments_acc, 2)
+                        t_update = t - moments_acc[lidx, l, 1, j]
+                        t_power = t_update
+                        for d in 2:order
+                            t_power *= t_update
+                            Atomix.@atomic moments_acc[lidx, l, d, j] += t_power
+                        end
                     end
                 end
                 @synchronize()
@@ -290,7 +290,7 @@ end
                 for lidx in 1:tile_size[3]
                     for l in 1:acc_labels_per_thread
                         for d in 2:order
-                            # Atomix.@atomic moments[(l_tile-1)*tile_size[3] + lidx, (l-1)+i, d, j_tile_global_offset] += moments_acc[lidx, (l-1)+i, d, j]
+                            Atomix.@atomic moments[(l_tile-1)*tile_size[3] + lidx, (l-1)+i, d, j_tile_global_offset] += moments_acc[lidx, (l-1)+i, d, j]
                         end
                     end
                 end
@@ -324,6 +324,34 @@ function centered_sum_KA_wrapper!(
     kernel = centered_sum_kern_KA_2!(dev, block_shape, kernel_ndrange)
     kernel(moments, traces, labels, Val(tile_size), Val(tiler_size), Val(order), Val(lsize), Val(nl), Val(acc_labels_per_thread), ndrange=kernel_ndrange)
     # KernelAbstractions.synchronize(dev)
+end
+
+# non-atomic shared memory reduction
+# n x m block:
+#   1. fetches tile of traces[n*samples_per_thread, m*traces_per_thread] to shared memory
+#       thd_trace_tile_size = [samples_per_thread, traces_per_thread]
+#   2. accumulate to moments_acc
+#       
+#   3. accumulate to global mem
+#   
+# block_shape: [traces_per_block]
+@kernel function centered_sum_kern_KA_3!(moments::AbstractArray{Tt, 4}, @Const(traces::AbstractMatrix{Tt}), @Const(labels::AbstractMatrix{Tl}),
+    ::Val{thd_trace_tile_size}, ::Val{thd_label_tile_size}, ::Val{order}, ::Val{lsize}, ::Val{nl}) where {Tt<:AbstractFloat, Tl<:Integer, thd_trace_tile_size, thd_label_tile_size, order, lsize, nl}
+
+    @assert thd_trace_tile_size[1] == thd_trace_tile_size[1] "trace and label tile sizes must match on index 1"
+
+    trace_shmem = @localmem Tt (thd_trace_tile_size[1] * @groupsize()[1], thd_trace_tile_size[2] * @groupsize()[2])
+    label_shmem = @localmem Tl (thd_label_tile_size[1] * @groupsize()[1], thd_label_tile_size[2] * @groupsize()[2])
+    moments_acc = @localmem Tt (@groupsize()[2], nl, order, @groupsize()[1])
+
+    j, i = @index(Local, NTuple)
+    J, I = @index(Group, NTuple)
+
+    trace_global_offset = (I * @groupsize()[2] * thd_trace_tile_size[2], J * @groupsize()[1] * thd_trace_tile_size[1])
+    label_global_offset = (I * @groupsize()[2] * thd_label_tile_size[2], J * @groupsize()[1] * thd_label_tile_size[1])
+    
+    trace_shmem[]
+
 end
 
 function centered_sum_kern_ak!(moments::AbstractArray{Tt, 3}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
