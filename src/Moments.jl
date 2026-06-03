@@ -573,16 +573,16 @@ function get_moments_dagger(traces::DArray{Tt}, labels::DArray{Tl}, order, nl, T
     chunk_idxs = (size(traces.chunks)..., size(labels.chunks, 2))
     MA = Array{Union{UniVarMomentsAccVecLabel{Tt, Tl, Tarray, labels.partitioning.blocksize[2]}, Nothing}, 3}(nothing, chunk_idxs...)
     cart_chunk_idxs = CartesianIndices(MA)
-    M = DArray(MA, Blocks(1, 1, 1))
+    M = distribute(MA, Blocks(1, 1, 1))
 
-    # initialize structs
+    # initialize structs (works)
     @sync for idx in cart_chunk_idxs
         Dagger.@spawn M[idx] = UniVarMomentsAccVecLabel{Tt, Tl, Tarray, labels.partitioning.blocksize[2]}(order, size(traces.subdomains[idx.I[1:2]...], 2), nl)
     end
 
-    # 1st pass
+    # 1st pass (results don't get updated in accumulator from DArray)
     @sync for chunk_idx in cart_chunk_idxs
-        Dagger.@spawn centered_sum_update_pass_1!(M[chunk_idx], traces.chunks[chunk_idx.I[1:2]...], labels.chunks[chunk_idx[1], chunk_idx[3]])
+        Dagger.@spawn centered_sum_update_pass_1!(M.chunks[chunk_idx], fetch(traces.chunks[chunk_idx.I[1:2]...]), fetch(labels.chunks[chunk_idx[1], chunk_idx[3]]))
     end
 
     # reduce results and copy back to the other workers
@@ -594,9 +594,12 @@ function get_moments_dagger(traces::DArray{Tt}, labels::DArray{Tl}, order, nl, T
             for l_chunk in axes(M, 3)
                 if j_chunk == 1
                     Dagger.@spawn broadcast!(+, M[1, j_chunk, l_chunk]._totals, M[1, j_chunk, l_chunk]._totals, M[i_chunk, j_chunk, l_chunk]._totals)
+                    Dagger.@spawn copyto!(M[1, j_chunk, l_chunk]._totals, Dagger.@spawn)
                 end
                 Dagger.@spawn broadcast!(+, M[1, j_chunk, l_chunk]._sums, M[1, j_chunk, l_chunk]._sums, M[i_chunk, j_chunk, l_chunk]._sums)
             end
+            # TODO: make sure these broadcast calls actually move result to dest
+            #   (they don't right now)
         end
     end
     @sync for i_chunk in axes(M, 1)
