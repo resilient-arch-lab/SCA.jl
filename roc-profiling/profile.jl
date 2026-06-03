@@ -16,12 +16,12 @@ function test1(ntraces::Int, tsize::Int, lsize::Int, order::Int, ldomain::UnitRa
     l_dev = ROCArray(l_cpu)
 
     m = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, ROCArray, lsize}(order, tsize, size(ldomain, 1))
-    # Moments.centered_sum_update!(m, t_dev, l_dev)
-    Moments.centered_sum_KA_wrapper!(m._moments, t_dev, l_dev, 
-        Val((64, 4, 4)), Val((1, 1, 1)), Val(4), Val(lsize), Val(256), Val(4))
+    Moments.centered_sum_update!(m, t_dev, l_dev)
+    # Moments.centered_sum_KA_wrapper!(m._moments, t_dev, l_dev, 
+    #     Val((64, 4, 4)), Val((1, 1, 1)), Val(4), Val(lsize), Val(256), Val(4))
     KernelAbstractions.synchronize(get_backend(t_dev))
 end
 
 # RX9070XT: 458ms pass 1 + 3.28s pass 2
-# RX9070XT (KA kernel): 35.512ms pass 2
+# RX9070XT (non-atomic kernel) 458ms pass 1 + 1.081s pass 2
 test1(100000, 1000, 16, 4)
