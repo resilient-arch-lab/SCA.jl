@@ -559,7 +559,7 @@ end
 # would be better if the mapping of trace / label chunks to workers was explicit, so
 # that the structs could be allocated on the right workers and not moved.
 # Also, I need to figure out how to scope calles to thread 1 of each worker without the output being 0
-function get_moments_dagger(traces::DArray{Tt}, labels::DArray{Tl}, order, nl, Tarray::Type)::Tuple{Tarray, Tarray, DArray} where {Tt<:AbstractFloat, Tl<:Integer}
+function get_moments_dagger(traces::DArray{Tt}, labels::DArray{Tl}, order, nl, Tarray::Type, assignment::Union{Symbol, Array{Int, 3}} = :arbitrary)::Tuple{Tarray, Tarray, DArray} where {Tt<:AbstractFloat, Tl<:Integer}
     @boundscheck begin
         checkbounds(traces.chunks, size(labels.chunks, 1), 1)
         checkbounds(labels.chunks, size(traces.chunks, 1), 1)
@@ -571,71 +571,83 @@ function get_moments_dagger(traces::DArray{Tt}, labels::DArray{Tl}, order, nl, T
 
     # set up distributed intermediate values
     chunk_idxs = (size(traces.chunks)..., size(labels.chunks, 2))
-    MA = Array{Union{UniVarMomentsAccVecLabel{Tt, Tl, Tarray, labels.partitioning.blocksize[2]}, Nothing}, 3}(nothing, chunk_idxs...)
+    MA = Array{Union{Moments.UniVarMomentsAccVecLabel{Tt, Tl, Tarray, labels.partitioning.blocksize[2]}, Nothing}, 3}(nothing, chunk_idxs...)
     cart_chunk_idxs = CartesianIndices(MA)
-    M = distribute(MA, Blocks(1, 1, 1))
+    M = distribute(MA, Blocks(1, 1, 1), assignment)
 
     # initialize structs (works)
     @sync for idx in cart_chunk_idxs
-        Dagger.@spawn M[idx] = UniVarMomentsAccVecLabel{Tt, Tl, Tarray, labels.partitioning.blocksize[2]}(order, size(traces.subdomains[idx.I[1:2]...], 2), nl)
+        Dagger.@spawn M[idx] = Moments.UniVarMomentsAccVecLabel{Tt, Tl, Tarray, labels.partitioning.blocksize[2]}(order, size(traces.subdomains[idx.I[1:2]...], 2), nl)
     end
 
-    # 1st pass (results don't get updated in accumulator from DArray)
+    # 1st pass (works, correct)
     @sync for chunk_idx in cart_chunk_idxs
-        Dagger.@spawn centered_sum_update_pass_1!(M.chunks[chunk_idx], fetch(traces.chunks[chunk_idx.I[1:2]...]), fetch(labels.chunks[chunk_idx[1], chunk_idx[3]]))
+        Mchunk = fetch(M[chunk_idx])
+        wait(Dagger.@spawn Moments.centered_sum_update_pass_1!(Mchunk, fetch(traces.chunks[chunk_idx.I[1:2]...]), fetch(labels.chunks[chunk_idx[1], chunk_idx[3]])))
+        Dagger.@spawn M[chunk_idx] = Mchunk
     end
+    # after this step, _totals are identical over j axis so that won't need reduction
+    # reduction necessary over i axis
 
-    # reduce results and copy back to the other workers
+    # reduce results and copy back to the other workers (works, correct)
+    #   after this step, _totals values at j_chunk > 1 are too low
     @sync for i_chunk in axes(M, 1)
         @sync for j_chunk in axes(M, 2)
             if i_chunk == 1
                 continue
             end
             for l_chunk in axes(M, 3)
+                Mreduce = fetch(M[1, j_chunk, l_chunk])
                 if j_chunk == 1
-                    Dagger.@spawn broadcast!(+, M[1, j_chunk, l_chunk]._totals, M[1, j_chunk, l_chunk]._totals, M[i_chunk, j_chunk, l_chunk]._totals)
-                    # Dagger.@spawn copyto!(M[1, j_chunk, l_chunk]._totals, Dagger.@spawn)
+                    wait(Dagger.@spawn broadcast!(+, Mreduce._totals, Mreduce._totals, fetch(M[i_chunk, j_chunk, l_chunk])._totals))
                 end
-                Dagger.@spawn broadcast!(+, M[1, j_chunk, l_chunk]._sums, M[1, j_chunk, l_chunk]._sums, M[i_chunk, j_chunk, l_chunk]._sums)
+                wait(Dagger.@spawn broadcast!(+, Mreduce._sums, Mreduce._sums, fetch(M[i_chunk, j_chunk, l_chunk])._sums))
+                Dagger.@spawn M[1, j_chunk, l_chunk] = Mreduce
             end
-            # TODO: make sure these broadcast calls actually move result to dest
-            #   (they don't right now)
         end
     end
+    # at this point, intermediate results are as expected (totals are only correct on [1, 1, :])
     @sync for i_chunk in axes(M, 1)
         for j_chunk in axes(M, 2)
             for l_chunk in axes(M, 3)
-                Dagger.@spawn copyto!(M[i_chunk, j_chunk, l_chunk]._totals, M[1, 1, l_chunk]._totals)
-                Dagger.@spawn copyto!(M[i_chunk, j_chunk, l_chunk]._sums, M[1, j_chunk, l_chunk]._sums)
+                totals = fetch(M[1, 1, l_chunk])._totals
+                Mreduced = fetch(M[1, j_chunk, l_chunk])
+                wait(Dagger.@spawn copyto!(Mreduced._totals, totals))
+                Dagger.@spawn M[i_chunk, j_chunk, l_chunk] = Mreduced
             end
         end
     end
 
-    # find means + 2nd pass
+    # find means + 2nd pass (works, correct)
     @sync for chunk_idx in cart_chunk_idxs
-        Dagger.@spawn centered_sum_update_pass_2!(M[chunk_idx], traces.chunks[chunk_idx.I[1:2]...], labels.chunks[chunk_idx[1], chunk_idx[3]])
+        Mreduce = fetch(M[chunk_idx])
+        wait(Dagger.@spawn Moments.centered_sum_update_pass_2!(Mreduce, fetch(traces.chunks[chunk_idx.I[1:2]...]), fetch(labels.chunks[chunk_idx[1], chunk_idx[3]])))
+        Dagger.@spawn M[chunk_idx] = Mreduce
     end
 
-    # reduce final results
+    # reduce final results to i_chunk = 1 (works, correct)
     @sync for i_chunk in axes(M, 1)
         @sync for j_chunk in axes(M, 2)
             if i_chunk == 1
                 continue
             end
             for l_chunk in axes(M, 3)
-                Mview = 2:size(M[1, j_chunk, l_chunk].moments, 3)
-                Mout = view(M[1, j_chunk, l_chunk].moments, :, :, Mview, :)
-                Min = view(M[i_chunk, j_chunk, l_chunk].moments, :, :, Mview, :)
-                Dagger.@spawn broadcast!(+, Mout, Mout, Min)
+                Mreduce = fetch(M[1, j_chunk, l_chunk])
+                Mchunk = fetch(M[i_chunk, j_chunk, l_chunk])
+                Mview = (1:size(Mreduce.moments, 1), 1:size(Mreduce.moments, 2), 2:size(Mreduce.moments, 3), 1:size(Mreduce.moments, 4))
+                
+                wait(Dagger.@spawn broadcast!(+, view(Mreduce.moments, Mview...), view(Mreduce.moments, Mview...), view(Mchunk.moments, Mview...)))
+                Dagger.@spawn M[1, j_chunk, l_chunk] = Mreduce
             end
         end
     end
 
+    # copy to pre-allocated output (works, correct)
     @sync for j_chunk in axes(M, 2)
         for l_chunk in axes(M, 3)
             l_idxs = labels.subdomains[1, l_chunk].indexes[2]
             t_idxs = traces.subdomains[1, j_chunk].indexes[2]
-
+            
             if j_chunk == 1
                 Dagger.@spawn copyto!(view(tout, l_idxs, :), fetch(M[1, j_chunk, l_chunk]).totals)
             end

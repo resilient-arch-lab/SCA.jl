@@ -11,17 +11,17 @@ using Test
 using GraphViz
 
 @testset "Dagger moments update test 2" begin
-    workers = [1, 2, 3]
+    workers = [2, 3]
     Random.seed!(12)
     t = rand(100000, 10)
     l = rand(UInt8, 100000, 16)
     l1 = l[:, 1]
-    td = distribute(t, Blocks(20000, 2))
-    ld = distribute(l, Blocks(20000, 8))
+    td = distribute(t, Blocks(50000, 5), [workers[1] workers[2]; workers[1] workers[2]])
+    ld = distribute(l, Blocks(50000, 16), [workers[1] workers[2]])
     m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(2, 10, 256)
 
     Moments.centered_sum_update!(m1, t, l1)
-    (m2out, t2out, M) = Moments.get_moments_dagger(td, ld, 2, 256, Array) 
+    (m2out, t2out, M) = Moments.get_moments_dagger(td, ld, 2, 256, Array, reshape([workers[1] workers[2]; workers[1] workers[2]], 2, 2, 1)) 
 
     @test all(m1.totals .== t2out[1, :])
     if !all(m1.totals .== t2out[1, :])
