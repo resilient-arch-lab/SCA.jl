@@ -278,7 +278,7 @@ function centered_sum_kern_ak!(moments::AbstractArray{Tt, 4}, traces::AbstractMa
         (l, j) = CartesianIndices(itr_view)[idx].I
         for ti in 1:ntiles
             tile_offset = traces_per_thread * (ti-1)
-            for i in axes(traces, 1)
+            for i in 1:traces_per_thread
                 t_i = traces[tile_offset + i, j]
                 l_i = convert(Int32, labels[tile_offset + i, l]+1)
                 t_update = t_i - moments[l, l_i, 1, j]
