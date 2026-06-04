@@ -1,6 +1,8 @@
 using DataFrames, CSV
 using StatsPlots, ColorSchemes, Colors
 
+# plotly()
+
 function plot_threadripper_results()
     results_df = CSV.read("profiling/internal-profiling/threadripper-results.csv", DataFrame)
 
@@ -54,8 +56,18 @@ function plot_A5000_results()
         title="Moment Estimation Benchmarks: NVIDIA A5000 (atomic implementation)",
         dpi=300, size=(1000, 600)
     )
-
     savefig("profiling/internal-profiling/A5000-atomic-time-scatter.png")
+    @df results_df scatter(
+        :NTraces, :NSamples, :Time, group=(:Order, :NLabels),
+        markercolor=RGB.(1.0 .* (1/64 .* :Order).^(1/4), 0, 1.0 .* (1/128 .* :NLabels).^(1/4)), 
+        xscale=:log10, yscale=:log10, zscale=:log10,
+        xlabel="# Traces", ylabel = "# Samples / Trace", zlabel="Time (S)",
+        xlims=(1e4, 1e5), ylims=(100, 1000), zlims=(1e-3, 1e3),
+        legend=:outertopright,
+        title="Moment Estimation Benchmarks: NVIDIA A5000 (atomic implementation)",
+        dpi=300, size=(800, 600)
+    )
+    savefig("profiling/internal-profiling/A5000-atomic-time-scatter-3D.png")
 
     results_df = CSV.read("profiling/internal-profiling/A5000-non-atomic-results.csv", DataFrame)
     @df results_df scatter(
@@ -68,8 +80,18 @@ function plot_A5000_results()
         title="Moment Estimation Benchmarks: NVIDIA A5000 (non-atomic implementation)",
         dpi=300, size=(1000, 600)
     )
-
     savefig("profiling/internal-profiling/A5000-non-atomic-time-scatter.png")
+    @df results_df scatter(
+        :NTraces, :NSamples, :Time, group=(:Order, :NLabels),
+        markercolor=RGB.(1.0 .* (1/64 .* :Order).^(1/4), 0, 1.0 .* (1/128 .* :NLabels).^(1/4)), 
+        xscale=:log10, yscale=:log10, zscale=:log10,
+        xlabel="# Traces", ylabel = "# Samples / Trace", zlabel="Time (S)",
+        xlims=(1e4, 1e5), ylims=(100, 1000), zlims=(1e-3, 1e3),
+        legend=:outertopright,
+        title="Moment Estimation Benchmarks: NVIDIA A5000 (non-atomic implementation)",
+        dpi=300, size=(800, 600)
+    )
+    savefig("profiling/internal-profiling/A5000-non-atomic-time-scatter-3D.png")
 end
 
 function plot_intersection_speedup()
