@@ -104,7 +104,6 @@ end
 end
 
 # Works on CPU and GPU
-# Faster on GPU than transposed version
 function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     @inbounds AK.foraxes(traces, 1) do i
         l_i = convert(Int32, labels[i]+1)
@@ -128,7 +127,7 @@ function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::Abstr
     end
 end
 
-function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, nl::Int) where {Tt<:AbstractFloat, Tl<:Integer}
+function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, nl::Int)::Tuple{AbstractMatrix{Tt}, AbstractVector{UInt32}} where {Tt<:AbstractFloat, Tl<:Integer}
     sums = zeros(eltype(traces), nl, size(traces, 2))
     totals = zeros(UInt32, nl)
     
@@ -159,6 +158,7 @@ function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::Abstr
     end
 end
 
+# For multi-element labels
 function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     @inbounds AK.foraxes(traces, 1) do i
         for l in axes(labels, 2)
@@ -191,18 +191,6 @@ function label_wise_sum_cpu!(traces::AbstractArray, labels::AbstractArray, sums:
         for trace in axes(traces, 1)
             @inbounds l = Int(labels[trace]) + 1
             @inbounds @views sum_tile[l, :] .+= trace_tile[trace, :]
-        end
-    end
-end
-
-function label_wise_sum_scalar!(traces::AbstractVector{Tt}, labels::AbstractVector{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
-    @inbounds AK.foraxes(traces, 1) do i
-        for l in axes(labels, 2)
-            l_i = convert(Int32, labels[i, l]+1)
-            Atomix.@atomic totals[l, l_i] += 1
-            for j in axes(traces, 2)
-                Atomix.@atomic sums[l, l_i, j] += traces[i, j]
-            end
         end
     end
 end
