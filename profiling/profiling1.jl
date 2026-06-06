@@ -22,7 +22,7 @@ end
 
 # test_1_wrapper("A5000-atomic-results", [2, 4, 8, 16, 32, 64], [100, 500, 1000], [10000, 20000, 50000, 100000], [2, 4, 8, 16, 32, 64, 128])
 # test_1_wrapper("A5000-non-atomic-results", [2, 4, 8, 16, 32, 64], [100, 500, 1000], [10000, 20000, 50000, 100000], [2, 4, 8, 16, 32, 64, 128])
-# test_1_wrapper("A5000-non-atomic-results-2", [2, 4, 8, 16, 32], [100, 200, 500, 1000, 2000, 5000], [50000, ], [2, 4, 8, 16, 32, 64, 128])
+# test_1_wrapper("A5000-non-atomic-results-2", [2, 4, 8, 16, 32], [100, 200, 400, 800, 1600], [20000, ], [2, 4, 8, 16, 32, 64, 128, 256])
 function test_1_wrapper(output_name::String, orders::Vector{Int}, Ns::Vector{Int}, Nt::Vector{Int}, lsize::Vector{Int})
     # result_file = open("profiling/internal-profiling/$(output_name).csv", "w")
     

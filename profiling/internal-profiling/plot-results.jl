@@ -81,6 +81,20 @@ function plot_A5000_results()
         dpi=300, size=(1000, 600)
     )
     savefig("profiling/internal-profiling/A5000-non-atomic-time-scatter.png")
+    
+    results_df = CSV.read("profiling/internal-profiling/A5000-non-atomic-results-2.csv", DataFrame)
+    @df results_df scatter(
+        :NSamples, :Time, group=(:Order, :NLabels),
+        markercolor=RGB.(1.0 .* (1/32 .* :Order).^(1/4), 0, 1.0 .* (1/256 .* :NLabels).^(1/4)), 
+        xscale=:log10, yscale=:log10,
+        xlims=(90, 2100), ylims=(1e-3, 1e3),
+        xlabel="Samples per trace", ylabel="Time (S) [50k traces]",
+        legend=:outertopright,
+        title="Moment Estimation Benchmarks: NVIDIA A5000 (non-atomic implementation)",
+        dpi=300, size=(1000, 600)
+    )
+    savefig("profiling/internal-profiling/A5000-non-atomic-time-scatter-2.png")
+    
     @df results_df scatter(
         :NTraces, :NSamples, :Time, group=(:Order, :NLabels),
         markercolor=RGB.(1.0 .* (1/64 .* :Order).^(1/4), 0, 1.0 .* (1/128 .* :NLabels).^(1/4)), 
