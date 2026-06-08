@@ -131,6 +131,7 @@ function plot_intersection_speedup()
     savefig("profiling/internal-profiling/A5000-atomic-speedup-scatter.png")
 
     
+    # Threadripper vs non-atomic results
     threadripper_df = CSV.read("profiling/internal-profiling/threadripper-results-2.csv", DataFrame)
     a5k_df = CSV.read("profiling/internal-profiling/A5000-non-atomic-results.csv", DataFrame)
 
