@@ -63,7 +63,7 @@ function test_1_CPU_wrapper(output_name::String, orders::Vector{Int}, Ns::Vector
         println("Profiling for order=$(order) ns=$(ns) nt=$(nt) lsize=$(lsize)")
         bench_result = test_1_CPU(order, ns, nt, 0:255, lsize)
 
-        cpu_time = mean(bench_result.times[2:end]) * 1e-9  # time in seconds
+        cpu_time = mean(bench_result.times) * 1e-9  # time in seconds
         
         results = DataFrame(
             "device" => "CPU", 
