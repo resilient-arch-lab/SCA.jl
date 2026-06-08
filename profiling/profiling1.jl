@@ -16,11 +16,11 @@ function test_1_CUDA(order::Int, ns::Int, nt::Int, ldomain, lsize::Int)
 end
 
 function test_1_CPU(order::Int, ns::Int, nt::Int, ldomain, lsize::Int)
-    t = CuArray(rand(Float32, nt, ns))
-    l = CuArray(UInt8.(rand(UInt8, nt, lsize)))
-    # m2 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, CuArray, 8}(8, ns, 256)
-    # m3 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, CuArray, 16}(8, ns, 256)
-    m4 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, CuArray, lsize}(order, ns, 256)
+    t = Array(rand(Float32, nt, ns))
+    l = Array(UInt8.(rand(UInt8, nt, lsize)))
+    # m2 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, Array, 8}(8, ns, 256)
+    # m3 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, Array, 16}(8, ns, 256)
+    m4 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, Array, lsize}(order, ns, 256)
 
     @benchmark Moments.centered_sum_update!($m4, $t, $l)
 end

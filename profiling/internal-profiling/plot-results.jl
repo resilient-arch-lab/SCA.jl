@@ -196,3 +196,25 @@ function plot_A5000_results_pub()
     plot(plots..., layout=(2, 3), legend=:outertopright, legend_title="lsize", dpi=300, size=(1000, 600), plot_title="Moment Estimation Benchmarks: NVIDIA A5000 (non-atomic implementation)")
     savefig("profiling/internal-profiling/publication/A5000-non-atomic-time-vs-order.png")
 end
+
+function plot_threadripper_results_pub()
+    # Atomic routine:
+    results_df = CSV.read("profiling/internal-profiling/threadripper-results-2.csv", DataFrame)
+    plots = Vector{Any}(undef, 0)
+    for order in [2, 8, 32]
+        result_selection = results_df[results_df[:, "Order"] .== order, :]
+        result_selection = result_selection[result_selection[:, "NTraces"] .== 20000, :]
+
+        p = @df result_selection plot(
+            :NSamples, :Time, group=(:NLabels),
+            linecolor=RGB.(1.0, 0, 1.0 .* (1/256 .* :NLabels).^(1/4)), 
+            xscale=:log10, yscale=:log10,
+            xlabel="# Samples / trace", ylabel = "Time(s)",
+            xlims=(1e2, 1600), ylims=(1e-3, 1e3),
+            title="order=$(order)",
+        )
+        push!(plots, p)
+    end
+    plot(plots..., layout=(2, 3), legend=:outertopright, legend_title="lsize", dpi=300, size=(1000, 600), plot_title="Moment Estimation Benchmarks: AMD Threadripper Pro 5975W")
+    savefig("profiling/internal-profiling/publication/threadripper-time-vs-order.png")
+end
