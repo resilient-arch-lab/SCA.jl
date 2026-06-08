@@ -55,7 +55,7 @@ function test_1_CUDA_wrapper(output_name::String, orders::Vector{Int}, Ns::Vecto
     end
 end
 
-# test_1_CUDA_wrapper("threadripper-results-3", [2, 4, 8, 16, 32], [100, 200, 400, 800, 1600], [20000, ], [2, 4, 8, 16, 32, 64, 128, 256])
+# test_1_CPU_wrapper("threadripper-results-3", [2, 4, 8, 16, 32], [100, 200, 400, 800, 1600], [20000, ], [2, 4, 8, 16, 32, 64, 128, 256])
 function test_1_CPU_wrapper(output_name::String, orders::Vector{Int}, Ns::Vector{Int}, Nt::Vector{Int}, lsize::Vector{Int})
     # result_file = open("profiling/internal-profiling/$(output_name).csv", "w")
     
@@ -63,7 +63,7 @@ function test_1_CPU_wrapper(output_name::String, orders::Vector{Int}, Ns::Vector
         println("Profiling for order=$(order) ns=$(ns) nt=$(nt) lsize=$(lsize)")
         bench_result = test_1_CPU(order, ns, nt, 0:255, lsize)
 
-        cpu_time = mean(bench_result.times[2:end])
+        cpu_time = mean(bench_result.times[2:end]) * 1e-9  # time in seconds
         
         results = DataFrame(
             "device" => "CPU", 
