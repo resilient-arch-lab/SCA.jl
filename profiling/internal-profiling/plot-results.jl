@@ -163,7 +163,7 @@ end
 function plot_threadripper_results_pub()
     results_df = CSV.read("profiling/internal-profiling/threadripper-results-3.csv", DataFrame)
 
-    fig = Figure(size = (800, 600), fontsize = 14)
+    fig = Figure(size = (800, 500), fontsize = 14)
     axes = Axis[]
     legend_entries = []
     legend_labels = String[]
@@ -213,7 +213,7 @@ end
 function plot_A5000_results_pub()
     # Atomic routine:
     results_df = CSV.read("profiling/internal-profiling/A5000-atomic-results-3.csv", DataFrame)
-    fig = Figure(size = (800, 600), fontsize = 14)
+    fig = Figure(size = (800, 500), fontsize = 14)
     axes = Axis[]
     legend_entries = []
     legend_labels = String[]
@@ -261,7 +261,7 @@ function plot_A5000_results_pub()
 
     # Non-atomic routine
     results_df = CSV.read("profiling/internal-profiling/A5000-non-atomic-results-3.csv", DataFrame)
-    fig = Figure(size = (800, 600), fontsize = 14)
+    fig = Figure(size = (800, 500), fontsize = 14)
     axes = Axis[]
     legend_entries = []
     legend_labels = String[]
@@ -319,7 +319,7 @@ function plot_A5000_speedup_pub()
     speedup = cpu_intersection[:, :Time] ./ gpu_intersection[:, :Time]
     gpu_intersection[!, :Speedup] = speedup
 
-    fig = Figure(size = (800, 600), fontsize = 14)
+    fig = Figure(size = (800, 500), fontsize = 14)
     axes = Axis[]
     legend_entries = []
     legend_labels = String[]

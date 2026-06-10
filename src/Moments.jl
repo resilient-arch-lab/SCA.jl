@@ -160,10 +160,6 @@ function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::Abstr
 end
 
 function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
-    itr_view = @view sums[:, 1, :]
-
-    # 28ms over itr_view
-    # 4.5ms over traces
     @inbounds AK.foreachindex(traces) do idx
         (i, j) = CartesianIndices(traces)[idx].I
         for l in axes(sums, 1)
@@ -174,16 +170,6 @@ function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{T
             end
         end
     end
-
-    # @inbounds AK.foraxes(traces, 1) do i
-    #     for l in axes(labels, 2)
-    #         l_i = convert(Int32, labels[i, l]+1)
-    #         Atomix.@atomic totals[l, l_i] += 1
-    #         for j in axes(traces, 2)
-    #             Atomix.@atomic sums[l, l_i, j] += traces[i, j]
-    #         end
-    #     end
-    # end
 end
 
 function label_wise_sum_cpu!(traces::AbstractArray, labels::AbstractArray, sums::AbstractArray, totals::AbstractArray)
