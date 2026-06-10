@@ -167,9 +167,9 @@ function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{T
         (i, j) = CartesianIndices(traces)[idx].I
         for l in axes(sums, 1)
             l_i = convert(Int32, labels[i, l]+1)
-            sums[l, l_i, j] += traces[i, j]
+            Atomix.@atomic sums[l, l_i, j] += traces[i, j]
             if j == 1
-                totals[l, l_i] += 1
+                Atomix.@atomic totals[l, l_i] += 1
             end
         end
     end
