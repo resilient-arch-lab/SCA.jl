@@ -2,6 +2,7 @@ using DataFrames, CSV
 using StatsPlots
 using ColorSchemes, Colors
 using CairoMakie
+using Format
 
 function plot_threadripper_results()
     results_df = CSV.read("profiling/internal-profiling/threadripper-results.csv", DataFrame)
@@ -162,7 +163,7 @@ end
 function plot_threadripper_results_pub()
     results_df = CSV.read("profiling/internal-profiling/threadripper-results-3.csv", DataFrame)
 
-    fig = Figure(size = (800, 800), fontsize = 14)
+    fig = Figure(size = (800, 600), fontsize = 14)
     axes = Axis[]
     legend_entries = []
     legend_labels = String[]
@@ -178,7 +179,7 @@ function plot_threadripper_results_pub()
             title = "order=$(order)",
             xlabel = "# Samples / trace", ylabel = "Time(s)",
             xscale = log10, yscale = log10,
-            limits = ((1e2, 1600), (1e-3, 1e3))
+            limits = ((1e2, 1600), (1e-3, 1e2))
         )
 
         push!(axes, ax)
@@ -190,7 +191,7 @@ function plot_threadripper_results_pub()
 
             for nlabel in nlabels
                 group_df = result_selection[result_selection.NLabels .== nlabel, :]
-                ln = lines!(ax, group_df.NSamples, group_df.Time, color = RGB(1.0, 0.0, (nlabel / 256)^(1/4)))
+                ln = lines!(ax, group_df.NSamples, group_df.Time, color = RGB((nlabel / 256)^(1/4), 0.0, 1-(nlabel / 256)^(1/4)))
 
                 # collect legend entries only once
                 if order == orders[1]
@@ -211,9 +212,8 @@ end
 
 function plot_A5000_results_pub()
     # Atomic routine:
-    results_df = CSV.read("profiling/internal-profiling/A5000-atomic-results.csv", DataFrame)
-    results_df = CSV.read("profiling/internal-profiling/A5000-atomic-results.csv", DataFrame)
-    fig = Figure(size = (800, 800), fontsize = 14)
+    results_df = CSV.read("profiling/internal-profiling/A5000-atomic-results-3.csv", DataFrame)
+    fig = Figure(size = (800, 600), fontsize = 14)
     axes = Axis[]
     legend_entries = []
     legend_labels = String[]
@@ -230,7 +230,7 @@ function plot_A5000_results_pub()
             title = "order=$(order)",
             xlabel = "# Samples / trace", ylabel = "Time(s)",
             xscale = log10, yscale = log10,
-            limits = ((1e2, 1600), (1e-3, 1e3))
+            limits = ((1e2, 1600), (1e-3, 1e2))
         )
 
         push!(axes, ax)
@@ -242,7 +242,7 @@ function plot_A5000_results_pub()
 
             for nlabel in nlabels
                 group_df = result_selection[result_selection.NLabels .== nlabel, :]
-                ln = lines!(ax, group_df.NSamples, group_df.Time, color = RGB(1.0, 0.0, (nlabel / 256)^(1/4)))
+                ln = lines!(ax, group_df.NSamples, group_df.Time, color = RGB((nlabel / 256)^(1/4), 0.0, 1-(nlabel / 256)^(1/4)))
 
                 # collect legend entries only once
                 if order == orders[1]
@@ -261,7 +261,7 @@ function plot_A5000_results_pub()
 
     # Non-atomic routine
     results_df = CSV.read("profiling/internal-profiling/A5000-non-atomic-results-3.csv", DataFrame)
-    fig = Figure(size = (800, 800), fontsize = 14)
+    fig = Figure(size = (800, 600), fontsize = 14)
     axes = Axis[]
     legend_entries = []
     legend_labels = String[]
@@ -278,7 +278,7 @@ function plot_A5000_results_pub()
             title = "order=$(order)",
             xlabel = "# Samples / trace", ylabel = "Time(s)",
             xscale = log10, yscale = log10,
-            limits = ((1e2, 1600), (1e-3, 1e3))
+            limits = ((1e2, 1600), (1e-3, 1e2))
         )
 
         push!(axes, ax)
@@ -290,7 +290,7 @@ function plot_A5000_results_pub()
 
             for nlabel in nlabels
                 group_df = result_selection[result_selection.NLabels .== nlabel, :]
-                ln = lines!(ax, group_df.NSamples, group_df.Time, color = RGB(1.0, 0.0, (nlabel / 256)^(1/4)))
+                ln = lines!(ax, group_df.NSamples, group_df.Time, color = RGB((nlabel / 256)^(1/4), 0.0, 1-(nlabel / 256)^(1/4)))
 
                 # collect legend entries only once
                 if order == orders[1]
@@ -311,7 +311,7 @@ end
 
 function plot_A5000_speedup_pub()
     cpu_results_df = CSV.read("profiling/internal-profiling/threadripper-results-3.csv", DataFrame)
-    gpu_results_df = CSV.read("profiling/internal-profiling/A5000-non-atomic-results-3.csv", DataFrame)
+    gpu_results_df = CSV.read("profiling/internal-profiling/A5000-atomic-results-3.csv", DataFrame)
 
     gpu_intersection = innerjoin(gpu_results_df, cpu_results_df[!, [:Order, :NSamples, :NTraces, :NLabels]], on=[:Order, :NSamples, :NTraces, :NLabels])
     cpu_intersection = innerjoin(cpu_results_df, gpu_results_df[!, [:Order, :NSamples, :NTraces, :NLabels]], on=[:Order, :NSamples, :NTraces, :NLabels])
@@ -319,7 +319,7 @@ function plot_A5000_speedup_pub()
     speedup = cpu_intersection[:, :Time] ./ gpu_intersection[:, :Time]
     gpu_intersection[!, :Speedup] = speedup
 
-    fig = Figure(size = (800, 800), fontsize = 14)
+    fig = Figure(size = (800, 600), fontsize = 14)
     axes = Axis[]
     legend_entries = []
     legend_labels = String[]
@@ -348,7 +348,7 @@ function plot_A5000_speedup_pub()
 
             for nlabel in nlabels
                 group_df = result_selection[result_selection.NLabels .== nlabel, :]
-                ln = lines!(ax, group_df.NSamples, group_df.Speedup, color = RGB(1.0, 0.0, (nlabel / 256)^(1/4)))
+                ln = lines!(ax, group_df.NSamples, group_df.Speedup, color = RGB((nlabel / 256)^(1/4), 0.0, 1-(nlabel / 256)^(1/4)))
 
                 # collect legend entries only once
                 if order == orders[1]
@@ -361,7 +361,7 @@ function plot_A5000_speedup_pub()
         end
     end
 
-    Label(fig[0, :], "Moment Estimation Benchmarks: GPU Speedup vs CPU", fontsize = 16)
+    Label(fig[0, :], "Moment Estimation Benchmarks: GPU Speedup vs CPU [atomic GPU kernel]", fontsize = 16)
     Legend(fig[:, 3], legend_entries, legend_labels, "Label size", framevisible=false)
     save("profiling/internal-profiling/publication/speedup-vs-order.png", fig, px_per_unit = 300 / 72)
 end
