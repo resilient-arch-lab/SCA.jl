@@ -82,6 +82,8 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarra
 end
 
 function centered_sum_update!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractGPUArray{Tt}, labels::AbstractGPUArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractGPUArray, LD}
+    # atomic kernels: 79.94ms
+    # non-atomic kernels: 200ms (but label wise sum is faster)
     centered_sum_update_pass_1!(acc, traces, labels)
     centered_sum_update_pass_2!(acc, traces, labels)
 end

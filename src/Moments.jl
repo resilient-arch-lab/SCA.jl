@@ -160,15 +160,28 @@ function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::Abstr
 end
 
 function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
-    @inbounds AK.foraxes(traces, 1) do i
-        for l in axes(labels, 2)
+    itr_view = @view sums[:, 1, :]
+
+    @inbounds AK.foreachindex(itr_view) do idx
+        (l, j) = CartesianIndices(itr_view)[idx].I
+        for i in size(traces, 1)
             l_i = convert(Int32, labels[i, l]+1)
-            Atomix.@atomic totals[l, l_i] += 1
-            for j in axes(traces, 2)
-                Atomix.@atomic sums[l, l_i, j] += traces[i, j]
+            sums[l, l_i, j] += traces[i, j]
+            if j == 1
+                totals[l, l_i] += 1
             end
         end
     end
+
+    # @inbounds AK.foraxes(traces, 1) do i
+    #     for l in axes(labels, 2)
+    #         l_i = convert(Int32, labels[i, l]+1)
+    #         Atomix.@atomic totals[l, l_i] += 1
+    #         for j in axes(traces, 2)
+    #             Atomix.@atomic sums[l, l_i, j] += traces[i, j]
+    #         end
+    #     end
+    # end
 end
 
 function label_wise_sum_cpu!(traces::AbstractArray, labels::AbstractArray, sums::AbstractArray, totals::AbstractArray)
@@ -269,10 +282,9 @@ function centered_sum_kern_ak!(moments::AbstractArray{Tt, 4}, traces::AbstractMa
     order = size(moments, 3)
     itr_view = @view moments[:, 1, 1, :]
 
-    traces_per_thread = 10
+    traces_per_thread = 4
     trace_tiles = tiled_view(traces, (traces_per_thread, size(traces, 2)))
     ntiles = size(trace_tiles, 1)
-    label_tiles = tiled_view(labels, (traces_per_thread, size(labels, 2)))
 
     @inbounds AK.foreachindex(itr_view) do idx
         (l, j) = CartesianIndices(itr_view)[idx].I
