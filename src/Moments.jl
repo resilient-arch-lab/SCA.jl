@@ -162,9 +162,9 @@ end
 function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     itr_view = @view sums[:, 1, :]
 
-    @inbounds AK.foreachindex(itr_view) do idx
-        (l, j) = CartesianIndices(itr_view)[idx].I
-        for i in size(traces, 1)
+    @inbounds AK.foreachindex(traces) do idx
+        (l, j) = CartesianIndices(traces)[idx].I
+        for i in axes(traces, 1)
             l_i = convert(Int32, labels[i, l]+1)
             sums[l, l_i, j] += traces[i, j]
             if j == 1
