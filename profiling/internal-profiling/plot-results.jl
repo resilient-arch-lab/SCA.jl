@@ -1,7 +1,7 @@
 using DataFrames, CSV
-using StatsPlots, ColorSchemes, Colors
-
-# plotly()
+using StatsPlots
+using ColorSchemes, Colors
+using CairoMakie
 
 function plot_threadripper_results()
     results_df = CSV.read("profiling/internal-profiling/threadripper-results.csv", DataFrame)
@@ -156,65 +156,218 @@ function plot_intersection_speedup()
     a5k_intersection[a5k_intersection[:, :Speedup] .>= 1, :]
 end
 
+
+# Publication Plots Below...
+
+function plot_threadripper_results_pub()
+    results_df = CSV.read("profiling/internal-profiling/threadripper-results-3.csv", DataFrame)
+
+    fig = Figure(size = (800, 800), fontsize = 14)
+    axes = Axis[]
+    legend_entries = []
+    legend_labels = String[]
+
+    orders = [2, 8, 16, 32]
+
+    for (i, order) in enumerate(orders)
+        row = div(i - 1, 2) + 1
+        col = mod1(i, 2)
+
+        ax = Axis(
+            fig[row, col],
+            title = "order=$(order)",
+            xlabel = "# Samples / trace", ylabel = "Time(s)",
+            xscale = log10, yscale = log10,
+            limits = ((1e2, 1600), (1e-3, 1e3))
+        )
+
+        push!(axes, ax)
+
+        try
+            result_selection = results_df[results_df.Order .== order, :]
+            result_selection = result_selection[result_selection.NTraces .== 20000, :]
+            nlabels = sort(unique(result_selection.NLabels))
+
+            for nlabel in nlabels
+                group_df = result_selection[result_selection.NLabels .== nlabel, :]
+                ln = lines!(ax, group_df.NSamples, group_df.Time, color = RGB(1.0, 0.0, (nlabel / 256)^(1/4)))
+
+                # collect legend entries only once
+                if order == orders[1]
+                    push!(legend_entries, ln)
+                    push!(legend_labels, string(nlabel))
+                end
+            end
+        catch e
+            @warn "Failed to plot order=$order" exception=(e, catch_backtrace())
+        end
+    end
+
+    # Figure title
+    Label(fig[0, :], "Moment Estimation Benchmarks: AMD Threadripper Pro 5975W", fontsize = 16)
+    Legend(fig[:, 3], legend_entries, legend_labels, "Label size", framevisible=false)
+    save("profiling/internal-profiling/publication/threadripper-time-vs-order.png", fig, px_per_unit = 300 / 72)
+end
+
 function plot_A5000_results_pub()
     # Atomic routine:
     results_df = CSV.read("profiling/internal-profiling/A5000-atomic-results.csv", DataFrame)
-    plots = Vector{Any}(undef, 0)
-    for order in [2, 4, 8, 16, 32, 64]
-        result_selection = results_df[results_df[:, "Order"] .== order, :]
-        result_selection = result_selection[result_selection[:, "NTraces"] .== 20000, :]
+    results_df = CSV.read("profiling/internal-profiling/A5000-atomic-results.csv", DataFrame)
+    fig = Figure(size = (800, 800), fontsize = 14)
+    axes = Axis[]
+    legend_entries = []
+    legend_labels = String[]
 
-        p = @df result_selection plot(
-            :NSamples, :Time, group=(:NLabels),
-            linecolor=RGB.(1.0, 0, 1.0 .* (1/128 .* :NLabels).^(1/4)), 
-            xscale=:log10, yscale=:log10,
-            xlabel="# Samples / trace", ylabel = "Time(s)",
-            xlims=(1e2, 1e3), ylims=(1e-2, 1e3),
-            title="order=$(order)",
+    orders = [2, 8, 16, 32]
+
+    # subplots
+    for (i, order) in enumerate(orders)
+        row = div(i - 1, 2) + 1
+        col = mod1(i, 2)
+
+        ax = Axis(
+            fig[row, col],
+            title = "order=$(order)",
+            xlabel = "# Samples / trace", ylabel = "Time(s)",
+            xscale = log10, yscale = log10,
+            limits = ((1e2, 1600), (1e-3, 1e3))
         )
-        push!(plots, p)
+
+        push!(axes, ax)
+
+        try
+            result_selection = results_df[results_df.Order .== order, :]
+            result_selection = result_selection[result_selection.NTraces .== 20000, :]
+            nlabels = sort(unique(result_selection.NLabels))
+
+            for nlabel in nlabels
+                group_df = result_selection[result_selection.NLabels .== nlabel, :]
+                ln = lines!(ax, group_df.NSamples, group_df.Time, color = RGB(1.0, 0.0, (nlabel / 256)^(1/4)))
+
+                # collect legend entries only once
+                if order == orders[1]
+                    push!(legend_entries, ln)
+                    push!(legend_labels, string(nlabel))
+                end
+            end
+        catch e
+            @warn "Failed to plot order=$order" exception=(e, catch_backtrace())
+        end
     end
-    plot(plots..., layout=(2, 3), legend=:outertopright, legend_title="lsize", dpi=300, size=(1000, 600), plot_title="Moment Estimation Benchmarks: NVIDIA A5000 (atomic implementation)")
-    savefig("profiling/internal-profiling/publication/A5000-atomic-time-vs-order.png")
+
+    Label(fig[0, :], "Moment Estimation Benchmarks: NVIDIA A5000 [atomic]", fontsize = 16)
+    Legend(fig[:, 3], legend_entries, legend_labels, "Label size", framevisible=false)
+    save("profiling/internal-profiling/publication/A5000-atomic-time-vs-order.png", fig, px_per_unit = 300 / 72)
 
     # Non-atomic routine
     results_df = CSV.read("profiling/internal-profiling/A5000-non-atomic-results-3.csv", DataFrame)
-    plots = Vector{Any}(undef, 0)
-    for order in [2, 4, 8, 16, 32]
-        result_selection = results_df[results_df[:, "Order"] .== order, :]
+    fig = Figure(size = (800, 800), fontsize = 14)
+    axes = Axis[]
+    legend_entries = []
+    legend_labels = String[]
 
-        p = @df result_selection plot(
-            :NSamples, :Time, group=(:NLabels),
-            linecolor=RGB.(1.0, 0, 1.0 .* (1/256 .* :NLabels).^(1/4)), 
-            xscale=:log10, yscale=:log10,
-            xlabel="# Samples / trace", ylabel = "Time(s)",
-            xlims=(1e2, 1600), ylims=(1e-3, 1e3),
-            title="order=$(order)",
+    orders = [2, 8, 16, 32]
+    
+    # subplots
+    for (i, order) in enumerate(orders)
+        row = div(i - 1, 2) + 1
+        col = mod1(i, 2)
+
+        ax = Axis(
+            fig[row, col],
+            title = "order=$(order)",
+            xlabel = "# Samples / trace", ylabel = "Time(s)",
+            xscale = log10, yscale = log10,
+            limits = ((1e2, 1600), (1e-3, 1e3))
         )
-        push!(plots, p)
+
+        push!(axes, ax)
+
+        try
+            result_selection = results_df[results_df.Order .== order, :]
+            result_selection = result_selection[result_selection.NTraces .== 20000, :]
+            nlabels = sort(unique(result_selection.NLabels))
+
+            for nlabel in nlabels
+                group_df = result_selection[result_selection.NLabels .== nlabel, :]
+                ln = lines!(ax, group_df.NSamples, group_df.Time, color = RGB(1.0, 0.0, (nlabel / 256)^(1/4)))
+
+                # collect legend entries only once
+                if order == orders[1]
+                    push!(legend_entries, ln)
+                    push!(legend_labels, string(nlabel))
+                end
+            end
+        catch e
+            @warn "Failed to plot order=$order" exception=(e, catch_backtrace())
+        end
     end
-    plot(plots..., layout=(2, 3), legend=:outertopright, legend_title="lsize", dpi=300, size=(1000, 600), plot_title="Moment Estimation Benchmarks: NVIDIA A5000 (non-atomic implementation)")
-    savefig("profiling/internal-profiling/publication/A5000-non-atomic-time-vs-order.png")
+
+    # Figure title
+    Label(fig[0, :], "Moment Estimation Benchmarks: NVIDIA A5000 [non-atomic]", fontsize = 16)
+    Legend(fig[:, 3], legend_entries, legend_labels, "Label size", framevisible=false)
+    save("profiling/internal-profiling/publication/A5000-non-atomic-time-vs-order.png", fig, px_per_unit = 300 / 72)
 end
 
-function plot_threadripper_results_pub()
-    # Atomic routine:
-    results_df = CSV.read("profiling/internal-profiling/threadripper-results-2.csv", DataFrame)
-    plots = Vector{Any}(undef, 0)
-    for order in [2, 8, 32]
-        result_selection = results_df[results_df[:, "Order"] .== order, :]
-        result_selection = result_selection[result_selection[:, "NTraces"] .== 20000, :]
+function plot_A5000_speedup_pub()
+    cpu_results_df = CSV.read("profiling/internal-profiling/threadripper-results-3.csv", DataFrame)
+    gpu_results_df = CSV.read("profiling/internal-profiling/A5000-non-atomic-results-3.csv", DataFrame)
 
-        p = @df result_selection plot(
-            :NSamples, :Time, group=(:NLabels),
-            linecolor=RGB.(1.0, 0, 1.0 .* (1/256 .* :NLabels).^(1/4)), 
-            xscale=:log10, yscale=:log10,
-            xlabel="# Samples / trace", ylabel = "Time(s)",
-            xlims=(1e2, 1600), ylims=(1e-3, 1e3),
-            title="order=$(order)",
+    gpu_intersection = innerjoin(gpu_results_df, cpu_results_df[!, [:Order, :NSamples, :NTraces, :NLabels]], on=[:Order, :NSamples, :NTraces, :NLabels])
+    cpu_intersection = innerjoin(cpu_results_df, gpu_results_df[!, [:Order, :NSamples, :NTraces, :NLabels]], on=[:Order, :NSamples, :NTraces, :NLabels])
+
+    speedup = cpu_intersection[:, :Time] ./ gpu_intersection[:, :Time]
+    gpu_intersection[!, :Speedup] = speedup
+
+    fig = Figure(size = (800, 800), fontsize = 14)
+    axes = Axis[]
+    legend_entries = []
+    legend_labels = String[]
+
+    orders = [2, 8, 16, 32]
+
+    # subplots
+    for (i, order) in enumerate(orders)
+        row = div(i - 1, 2) + 1
+        col = mod1(i, 2)
+
+        ax = Axis(
+            fig[row, col],
+            title = "order=$(order)",
+            xlabel = "# Samples / trace", ylabel = "Speedup",
+            xscale = log10, yscale = log10,
+            limits = ((1e2, 1600), (0.5, 20))
         )
-        push!(plots, p)
+
+        push!(axes, ax)
+
+        try
+            result_selection = gpu_intersection[gpu_intersection.Order .== order, :]
+            result_selection = result_selection[result_selection.NTraces .== 20000, :]
+            nlabels = sort(unique(result_selection.NLabels))
+
+            for nlabel in nlabels
+                group_df = result_selection[result_selection.NLabels .== nlabel, :]
+                ln = lines!(ax, group_df.NSamples, group_df.Speedup, color = RGB(1.0, 0.0, (nlabel / 256)^(1/4)))
+
+                # collect legend entries only once
+                if order == orders[1]
+                    push!(legend_entries, ln)
+                    push!(legend_labels, string(nlabel))
+                end
+            end
+        catch e
+            @warn "Failed to plot order=$order" exception=(e, catch_backtrace())
+        end
     end
-    plot(plots..., layout=(2, 3), legend=:outertopright, legend_title="lsize", dpi=300, size=(1000, 600), plot_title="Moment Estimation Benchmarks: AMD Threadripper Pro 5975W")
-    savefig("profiling/internal-profiling/publication/threadripper-time-vs-order.png")
+
+    Label(fig[0, :], "Moment Estimation Benchmarks: GPU Speedup vs CPU", fontsize = 16)
+    Legend(fig[:, 3], legend_entries, legend_labels, "Label size", framevisible=false)
+    save("profiling/internal-profiling/publication/speedup-vs-order.png", fig, px_per_unit = 300 / 72)
+end
+
+function plot_pub()
+    plot_threadripper_results_pub()
+    plot_A5000_results_pub()
+    plot_A5000_speedup_pub()
 end
