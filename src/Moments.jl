@@ -163,6 +163,7 @@ function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{T
     itr_view = @view sums[:, 1, :]
 
     # 28ms over itr_view
+    # 4.5ms over traces
     @inbounds AK.foreachindex(traces) do idx
         (i, j) = CartesianIndices(traces)[idx].I
         for l in axes(sums, 1)
@@ -283,7 +284,7 @@ function centered_sum_kern_ak!(moments::AbstractArray{Tt, 4}, traces::AbstractMa
     order = size(moments, 3)
     itr_view = @view moments[:, 1, 1, :]
 
-    traces_per_thread = 4
+    traces_per_thread = 10
     trace_tiles = tiled_view(traces, (traces_per_thread, size(traces, 2)))
     ntiles = size(trace_tiles, 1)
 
