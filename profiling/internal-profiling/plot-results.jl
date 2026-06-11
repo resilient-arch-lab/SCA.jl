@@ -174,12 +174,18 @@ function plot_threadripper_results_pub()
         row = div(i - 1, 2) + 1
         col = mod1(i, 2)
 
+        xlabel = row != 2 ? "" : "# Samples / trace"; xticksvisible = row != 2 ? false : true; xticklabelsvisible = xticksvisible
+        ylabel = col != 1 ? "" : "Time(s)"; yticksvisible = col != 1 ? false : true; yticklabelsvisible = yticksvisible
+
         ax = Axis(
             fig[row, col],
             title = "order=$(order)",
-            xlabel = "# Samples / trace", ylabel = "Time(s)",
+            xlabel=xlabel, xticksvisible=xticksvisible, xticklabelsvisible=xticklabelsvisible,
+            ylabel=ylabel, yticksvisible=yticksvisible, yticklabelsvisible=yticklabelsvisible,
             xscale = log10, yscale = log10,
-            limits = ((1e2, 1600), (1e-3, 1e2))
+            limits = ((1e2, 1600), (1e-3, 1e2)),
+            xtickformat = values -> ["$(round(Int, value))" for value in values],
+            ytickformat = "{}"
         )
 
         push!(axes, ax)
@@ -205,7 +211,7 @@ function plot_threadripper_results_pub()
     end
 
     # Figure title
-    Label(fig[0, :], "Moment Estimation Benchmarks: AMD Threadripper Pro 5975W", fontsize = 16)
+    Label(fig[0, :], "Moment Estimation Runtime: AMD Threadripper Pro 5975W", fontsize = 16)
     Legend(fig[:, 3], legend_entries, legend_labels, "Label size", framevisible=false)
     save("profiling/internal-profiling/publication/threadripper-time-vs-order.png", fig, px_per_unit = 300 / 72)
 end
@@ -225,10 +231,16 @@ function plot_A5000_results_pub()
         row = div(i - 1, 2) + 1
         col = mod1(i, 2)
 
+        xlabel = row != 2 ? "" : "# Samples / trace"; xticksvisible = row != 2 ? false : true; xticklabelsvisible = xticksvisible
+        ylabel = col != 1 ? "" : "Time(s)"; yticksvisible = col != 1 ? false : true; yticklabelsvisible = yticksvisible
+
         ax = Axis(
             fig[row, col],
             title = "order=$(order)",
-            xlabel = "# Samples / trace", ylabel = "Time(s)",
+            xlabel=xlabel, xticksvisible=xticksvisible, xticklabelsvisible=xticklabelsvisible,
+            ylabel=ylabel, yticksvisible=yticksvisible, yticklabelsvisible=yticklabelsvisible,
+            xtickformat = values -> ["$(round(Int, value))" for value in values],
+            ytickformat = "{}",
             xscale = log10, yscale = log10,
             limits = ((1e2, 1600), (1e-3, 1e2))
         )
@@ -273,10 +285,16 @@ function plot_A5000_results_pub()
         row = div(i - 1, 2) + 1
         col = mod1(i, 2)
 
+        xlabel = row != 2 ? "" : "# Samples / trace"; xticksvisible = row != 2 ? false : true; xticklabelsvisible = xticksvisible
+        ylabel = col != 1 ? "" : "Time(s)"; yticksvisible = col != 1 ? false : true; yticklabelsvisible = yticksvisible
+
         ax = Axis(
             fig[row, col],
             title = "order=$(order)",
-            xlabel = "# Samples / trace", ylabel = "Time(s)",
+            xlabel=xlabel, xticksvisible=xticksvisible, xticklabelsvisible=xticklabelsvisible,
+            ylabel=ylabel, yticksvisible=yticksvisible, yticklabelsvisible=yticklabelsvisible,
+            xtickformat = values -> ["$(round(Int, value))" for value in values],
+            ytickformat = "{}",
             xscale = log10, yscale = log10,
             limits = ((1e2, 1600), (1e-3, 1e2))
         )
@@ -330,11 +348,17 @@ function plot_A5000_speedup_pub()
     for (i, order) in enumerate(orders)
         row = div(i - 1, 2) + 1
         col = mod1(i, 2)
+        
+        xlabel = row != 2 ? "" : "# Samples / trace"; xticksvisible = row != 2 ? false : true; xticklabelsvisible = xticksvisible
+        ylabel = col != 1 ? "" : "Speedup (relative to CPU)"; yticksvisible = col != 1 ? false : true; yticklabelsvisible = yticksvisible
 
         ax = Axis(
             fig[row, col],
             title = "order=$(order)",
-            xlabel = "# Samples / trace", ylabel = "Speedup",
+            xlabel=xlabel, xticksvisible=xticksvisible, xticklabelsvisible=xticklabelsvisible,
+            ylabel=ylabel, yticksvisible=yticksvisible, yticklabelsvisible=yticklabelsvisible,
+            xtickformat = values -> ["$(round(Int, value))" for value in values],
+            ytickformat = values -> ["$(round(Int, value))x" for value in values],
             xscale = log10, yscale = log10,
             limits = ((1e2, 1600), (0.5, 20))
         )
