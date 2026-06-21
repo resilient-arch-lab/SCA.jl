@@ -80,6 +80,29 @@ struct UniVarMomentsAccVecLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:Abstract
     end
 end
 
+# For estimating multivariate sums of centered products
+#   (calculates SCPs for the set of sample points in `ns`)
+struct MultiVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+    totals::Ta
+    SCPs::Ta  # sums of centered products
+    order::Vector{UInt}
+    ns::UInt  # number of samples per trace (and therefore the variateness of sums of centered prods)
+    nl::UInt
+    _totals::Ta
+    _SCPs::Ta
+    _sums::Ta
+
+    function MultiVarMomentsAcc{Tt, Tl, Ta}(order::UInt, ns, nl) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+        totals = fill!(Tarray{UInt32, 1}(undef, nl), 0)
+        SCPs = fill!(Tarray{Tt, 3}(undef, nl, order, 1), 0)
+        order = fill!(Tarray{UInt, 1}(undef, ns), order)  # the same order is calculated for each sample position 
+        _totals = similar(totals)
+        _SCPs = similar(SCPs)
+        _sums = Tarray{Tt, 2}(undef, nl, ns)
+        new(totals, SCPs, order, ns, nl, _totals, _SCPs, _sums)
+    end
+end
+
 # works on CPU and GPU
 # Depricated in favor of AcceleratedKernels kernels (label_wise_sum_ak!)
 @kernel function label_wise_sum_shared!(@Const(traces::AbstractMatrix{Tt}), @Const(labels::AbstractVector{Tl}), sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
@@ -298,6 +321,38 @@ function centered_sum_kern_ak_atomic!(moments::AbstractArray{Tt, 4}, traces::Abs
     end
 end
 
+function centered_sum_kern_ak_multivar!(SCPs::AbstractArray{Tt, 3}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, order::AbstractVector{UInt}, means::AbstractMatrix{Tt}) where {Tt<:AbstractFloat, Tl<:Integer}
+    j1_itr = 2:size(traces, 2)
+
+    @inbounds AK.foraxes(traces, 1) do i
+        # 1. find centered products of trace i
+        l_i = convert(Int32, labels[i]+1)
+        for didx in axes(order, 1)
+            cp::Tt = (traces[i, 1] - means[l_i, 1]) ^ order[didx]
+            for j in j1_itr
+                cp *= (traces[i, j] - means[l_i, j]) ^ order[didx]
+            end
+        end
+
+        # 2. find sum of centered products of all traces
+        for j in axes(traces, 2)
+
+        end 
+    end
+
+    @inbounds AK.foraxes(traces, 1) do i
+        l_i = convert(Int32, labels[i]+1)
+        for j in axes(traces, 2)
+            t_update = traces[i, j] - SCPs[l_i, 1, j]
+            pow = t_update
+            for d in 2:order
+                pow *= t_update
+                Atomix.@atomic SCPs[l_i, d, j] += pow  # this line is like 90% of this functions runtime
+            end
+        end
+    end
+end
+
 function centered_sum_cpu!(moments::AbstractArray{Tt, 3}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     order = size(moments, 2)
     samples_per_thread = cld(size(traces, 2), Threads.nthreads())
@@ -433,8 +488,6 @@ function centered_sum_update!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}, 
     end
 end
 
-# There's the potential for shards to be larger than the slice they're correlated with
-
 # First pass in two pass approach
 function centered_sum_update_pass_1!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
     @boundscheck begin
@@ -469,6 +522,25 @@ end
 function centered_sum_update!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
     centered_sum_update_pass_1!(acc, traces, labels)
     centered_sum_update_pass_2!(acc, traces, labels)
+end
+
+function centered_sum_update!(acc::MultiVarMomentsAcc{Tt, Tl, Ta}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+    # Pass 1, calculate labels wise sums
+    @boundscheck begin
+        checkbounds(acc._sums, acc.nl, size(traces, 2))
+        checkbounds(acc._SCPs, acc.nl, acc.order[1], 1)
+        checkbounds(labels, size(traces, 1), LD)
+    end
+
+    label_wise_sum_ak!(traces, labels, acc._sums, acc._totals)
+
+    # Pass 2: find means and calculate sums of centered prods
+    @. acc._SCPs[:, :, 1, :] = acc._sums / acc._totals
+
+    centered_sum_kern_ak!(acc._SCPs, traces, labels)
+
+    acc.moments .= acc._moments
+    acc.totals .= acc._totals
 end
 
 # Precision (even with Float64) seems to degrade from performing the same 
