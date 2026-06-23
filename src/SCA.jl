@@ -1,5 +1,5 @@
 module SCA
-export SNR, Moments, Utils, Attack, TTest
+export SNR, Moments, MultiVarMoments, Utils, Attack, TTest
 
 
 include("SNR.jl")
@@ -10,6 +10,9 @@ using .TTest
 
 include("Moments.jl")
 using .Moments
+
+include("MultiVarMoments.jl")
+using .MultiVarMoments
 
 include("Utils.jl")
 using .Utils
