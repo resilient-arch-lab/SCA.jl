@@ -9,7 +9,8 @@ Random.seed!(12)
 @testset "Multivariate Moment Estimation" begin
     ns = 2  # must = 2 so that covariance can be calculated from the sums of centered products
     order = 1  # must = 1 for same reason
-    m = MultiVarMoments.MultiVarMomentsAcc{Float64, UInt8, Array}(UInt(order), ns, 256)
+    mref = MultiVarMoments.MultiVarMomentsAccReference{Float64, UInt8, Array}(UInt(order), ns, 256)
+    m = MultiVarMoments.MultiVarMomentsAcc{Float64, UInt8, Array}(order, ns, 256)
     a = rand(50000, ns)  # lots of measurements are required for `cov` and `centered_sum_update` to converge
                          # since covariance is calculated per label and there are 256 labels
     l = rand(UInt8, 50000)
@@ -17,9 +18,12 @@ Random.seed!(12)
     set_0 = a[l.==0, :]
     cov_0 = cov(set_0) 
 
+    MultiVarMoments._centered_sum_update_reference!(mref, a, l)
     MultiVarMoments.centered_sum_update!(m, a, l)
 
-    @test all(.≈((m.SCPs[1, :, :] / size(a[l.==0, :], 1)), cov_0[1, 2], rtol=0.01))
+    @test all(.≈((mref.SCPs[1, :, :] / size(a[l.==0, :], 1)), cov_0[1, 2], rtol=0.01))
+    @test all(.≈(mref.SCPs, m.SCPs))
+    @test all(mref.totals .== m.totals)
 end
 
 # Test precision / stability of centered sum merging formula [Prop. 2.1, 10.2172/1028931]
