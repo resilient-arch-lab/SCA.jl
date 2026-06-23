@@ -40,12 +40,15 @@ function centered_sum_multivar!(SCPs::AbstractArray{Tt, 3}, traces::AbstractMatr
 end
 
 function centered_sum_update!(acc::MultiVarMomentsAcc{Tt, Tl, Ta}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+    fill!(acc._sums, 0)
+    fill!(acc._totals, 0)
+    fill!(acc._SCPs, 0)
+    
     # Pass 1, calculate labels wise sums
     Moments.label_wise_sum_ak!(traces, labels, acc._sums, acc._totals)
 
     # Pass 2: find means and calculate sums of centered prods
     means = acc._sums ./ acc._totals
-
     centered_sum_multivar!(acc._SCPs, traces, labels, acc.α, means)
 
     acc.SCPs .= acc._SCPs

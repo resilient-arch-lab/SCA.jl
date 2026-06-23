@@ -16,6 +16,7 @@ MultivariateStats = "6f286f6a-111f-5878-ab1e-185364afe411"
 OrderedCollections = "bac558e1-5e72-5ebc-8fee-abe8a469f55d"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 
 [weakdeps]
 GPUArrays = "0c68f7d7-f131-5f86-a1c3-88cf8149b2d7"
@@ -37,6 +38,7 @@ MultivariateStats = "0.10.3"
 OrderedCollections = "1.8.1"
 Random = "1.11.0"
 Statistics = "1.11.1"
+StatsBase = "0.34.12"
 julia = "1.11"
 
 [extras]
