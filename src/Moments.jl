@@ -4,7 +4,17 @@ Parallel estimation of statistical moments. based on the implementation from
 """
 
 module Moments
-export UniVarMomentsAcc, centered_sum_update!, merge_from!, get_mean_and_var, UniVarMomentsAccVecLabel, centered_sum_update_pass_1!, centered_sum_update_pass_2!
+export 
+    AbstractMomentsAcc,
+    UniVarMomentsAcc, 
+    UniVarMomentsAccVecLabel,
+    MomentOrder,
+    moments, 
+    centered_sum_update!, 
+    merge_from!, 
+    get_mean_and_var, 
+    centered_sum_update_pass_1!, 
+    centered_sum_update_pass_2!
 
 include("Utils.jl")
 using .Utils
@@ -15,10 +25,9 @@ import AcceleratedKernels as AK
 using Base: convert
 using FixedSizeArrays
 
-# TODO: I'm not convinced this actually needs to be parameterized on the array type, and it
-# does complicate things slightly.
-# TODO: This should be able to handle mutli-dimensional labels (e.g. vector labels)
-struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+abstract type AbstractMomentsAcc end
+
+struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray} <: AbstractMomentsAcc
     totals::Tarray
     moments::Tarray
     order::UInt
@@ -38,29 +47,7 @@ struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     end
 end
 
-# right now this is slower than running a UniVarMomentsAccs for each label element
-struct UniVarMomentsAccNDLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
-    totals::Tarray  # Tarray is a typevar, which you can't parameterize directly 
-    moments::Tarray
-    order::UInt
-    ns::UInt
-    nl::UInt
-    label_shape::NTuple{LD}
-    _totals::Tarray
-    _moments::Tarray
-    _sums::Tarray
-
-    function UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}(order, ns, nl, label_shape) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD} 
-        totals = fill!(Tarray{UInt32, 1+LD}(undef, label_shape..., nl), 0)
-        moments = fill!(Tarray{Tt, 3+LD}(undef, label_shape..., nl, order, ns), 0)
-        _totals = similar(totals)
-        _moments = similar(moments)
-        _sums = Tarray{Tt, 2+LD}(undef, label_shape..., nl, ns)
-        new{Tt, Tl, Tarray, LD}(totals, moments, order, ns, nl, label_shape, _totals, _moments, _sums)
-    end
-end
-
-struct UniVarMomentsAccVecLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
+struct UniVarMomentsAccVecLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD} <: AbstractMomentsAcc
     totals::Tarray
     moments::Tarray
     order::UInt
@@ -77,6 +64,38 @@ struct UniVarMomentsAccVecLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:Abstract
         _moments = fill!(similar(moments), 0)
         _sums = fill!(Tarray{Tt, 3}(undef, LD, nl, ns), 0)
         new{Tt, Tl, Tarray, LD}(totals, moments, order, ns, nl, _totals, _moments, _sums)
+    end
+end
+
+const MomentOrder = Union{Int, AbstractVector{Int}, AbstractMatrix{Int}}
+
+# Non-incremental moment estimation superfunction
+function moments(a::AbstractMatrix{Tt}, l::AbstractVecOrMat{Tl}, order::MomentOrder, l_range::Int, variatness::Symbol = :univariate)::AbstractMomentsAcc where {Tt<:AbstractFloat, Tl<:Integer}
+    @boundscheck begin
+        checkbounds(a, size(l, 1), 1); checkbounds(l, size(a, 1), 1)
+        if typeof(order) <: AbstractVector
+            checkbounds(a, 1, size(order, 1)); checkbounds(order, size(a, 2))
+        elseif typeof(order) <: AbstractMatrix
+            checkbounds(a, 1, size(order, 2)); checkbounds(order, 1, size(a, 2))
+        end
+    end
+
+    @assert get_backend(a) == get_backend(l) "a and l must have the same array backend"
+
+    if variatness == :univariate
+        @assert typeof(order) == Int "order can only be non-scalar for multivariate moments"
+        
+        if typeof(l) <: AbstractVector
+            m = UniVarMomentsAcc{Tt, Tl, get_backend(a)}(order, size(a, 2), l_range)
+        elseif typeof(l) <: AbstractMatrix
+            m = UniVarMomentsAccVecLabel{Tt, Tl, get_backend(a), size(l, 2)}(order, size(a, 2), l_range)
+        end
+
+        centered_sum_update!(m, a, l)
+
+        return m
+    elseif variatness == :multivariate
+
     end
 end
 
@@ -391,48 +410,6 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
     return nothing
 end
 
-# This is still horrendously slow on CPU, must fix. 
-# No overhead compared to scalar labels on GPUs though
-function centered_sum_update!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
-    # Initialize intermediate values
-    fill!(acc._sums, 0)
-    fill!(acc._moments, 0)
-    fill!(acc._totals, 0)
-
-    if get_backend(traces) != get_backend(acc._sums) || get_backend(labels) != get_backend(acc._sums)
-        print("backend mismatch")
-        traces = Tarray(traces)
-        labels = Tarray(labels)
-    end
-
-    @time "label_wise_sum_ak!" label_wise_sum_ak_transposed!(traces, labels, acc._sums, acc._totals)
-
-    # find means
-    @time "means" @. acc._moments[:, :, 1, :] = acc._sums / acc._totals
-
-    # compute centered sums
-    @time "centered_sum_kern_ak!" centered_sum_kern_ak!(acc._moments, traces, labels)  # 15s
-    # @time "centered_sum_kern_ak!" for l in axes(labels, 2)
-    # centered_sum_kern_ak_transposed!(view(acc._moments, l, :, :, :), traces, view(labels, :, l))
-    # end
-
-    # merge centered sum estimations
-    @time "merge" begin
-        init_ls = acc.totals .== 0
-        update_ls = acc.totals .!= 0
-        if any(init_ls)
-            @inbounds acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
-            # @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
-        end
-        if any(update_ls)
-            for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
-                merge_from_ak!(view(acc.moments, l, :, :), view(acc.totals, l), view(acc._moments, l, :, :), view(acc._totals, l))
-            end
-            # @inbounds acc.totals[update_ls] .+= acc._totals[update_ls]
-        end
-    end
-end
-
 # First pass in two pass approach
 function centered_sum_update_pass_1!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
     @boundscheck begin
@@ -534,70 +511,6 @@ end
 
 function merge_from!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, acc_new::UniVarMomentsAcc{Tt, Tl, Tarray}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     merge_from!(acc, acc_new.moments, acc_new.totals)
-end
-
-function merge_from!(acc::UniVarMomentsAccNDLabel{Tt, Tl, Tarray, 1}, M_new::Array{Tt, 4}, totals_new::Array{UInt32, 2}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    checkbounds(M_new, size(acc.moments)...)
-    checkbounds(totals_new, size(acc.totals)...)
-    
-    if all(totals_new .== 0)
-        return nothing
-    end
-    if all(acc.totals .== 0)
-        # If this is the first estimation, the acc values can be updated directly
-        acc.moments .= M_new
-        acc.totals .= totals_new
-        return nothing
-    end
-
-    kern_order = Int(acc.order)
-
-    @inbounds for l in axes(acc.totals, 1)
-        δ = view(M_new, l, :, 1, :) - view(acc.moments, l, :, 1, :)
-        δ_pows = fill!(Tarray{Tt, 2}(undef, acc.order+1, acc.ns), 0)
-        M_old_l, totals_old_l = view(acc.moments, l, :, :, :), view(acc.totals, l, :)
-        totals_new_l = view(totals_new, l, :)
-        totals_result_l = totals_old_l .+ totals_new_l
-
-        for l_idx in axes(totals_old_l, 1)
-            M_old_i = view(M_old_l, l_idx, :, :)
-            M_new_i = view(M_new, l, l_idx, :, :)
-
-            if totals_new_l[l_idx] == 0
-                continue
-            end
-            if totals_old_l[l_idx] == 0
-                M_old_i .= M_new_i
-                totals_old_l[l_idx] = totals_new_l[l_idx]
-                continue
-            end
-
-            for j in axes(δ_pows, 1)
-                view(δ_pows, j, :) .= view(δ, l_idx, :).^j
-            end
-            for p in kern_order:-1:2
-                (as_input1, to_update1) = view(M_old_i, 1:p-1, :), view(M_old_i, p, :)
-                (as_input2, to_update2) = view(M_new_i, 1:p-1, :), view(M_new_i, p, :)
-
-                to_update1 .+= to_update2
-
-                for k in 1:p-2
-                    δ_pows_k = @views δ_pows[k, :]
-                    cst = binomial(k, p)
-                    tmp2 = view(as_input1, p-k, :) .* ((-totals_new_l[l_idx]/totals_result_l[l_idx]).^k)
-                    tmp3 = view(as_input2, p-k, :) .* ((totals_old_l[l_idx]/totals_result_l[l_idx]).^k)
-                    to_update1 .+= (δ_pows_k .* cst) .* (tmp2 .+ tmp3)
-                end
-                tmp = (1/(totals_new_l[l_idx]^(p-1))) - ((-1/totals_old_l[l_idx])^(p-1))
-                tmp *= ((totals_old_l[l_idx] * totals_new_l[l_idx])/totals_result_l[l_idx])^p
-
-                to_update1 .+= δ_pows[p, :] .* tmp
-            end
-            view(M_old_i, 1, :) .+= (view(δ, l_idx, :) .* (totals_new_l[l_idx]/totals_result_l[l_idx]))  # update mean seperately
-        end
-        totals_old_l .= totals_result_l
-    end
-    return nothing
 end
 
 # Merge a single label estimation
