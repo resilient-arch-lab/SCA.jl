@@ -70,32 +70,47 @@ end
 const MomentOrder = Union{Int, AbstractVector{Int}, AbstractMatrix{Int}}
 
 # Non-incremental moment estimation superfunction
-function moments(a::AbstractMatrix{Tt}, l::AbstractVecOrMat{Tl}, order::MomentOrder, l_range::Int, variatness::Symbol = :univariate)::AbstractMomentsAcc where {Tt<:AbstractFloat, Tl<:Integer}
+"""
+Estimate `d`-th order moments of data `a` labeled by `l`, where rows of `a` are independent observations.
+Each element of `l` corresponds to a row in `a` if `l` is a vector. If `l` is a matrix, each
+row corresponds to a row in `a`, and moments of `a` are calculated for each column in `l`. Returns an
+instance of `AbstractMomentsAcc`
+
+`l_range` represents the number of unique labels in `l`. It should be noted that values of `l` are expected
+to in the range [0, `l_range`-1], or else `boundserror`s or bad accesses will occur.
+
+`variatness` can be one of `:univariate` (default) or `:multivariate`. In the univariate case, moments are
+estimated independently for each element in an observation (across rows of `a`). In the multivariate case,
+the multivariate moment is estimated across all elements of observations. Univariate moments require that 
+order `d` is a scalar integer. Multivariate moments allow `d` to be an integer, a vector of equal length
+of observations, or a matrix where rows are equal length to observations.
+"""
+function moments(a::AbstractMatrix{Tt}, l::AbstractVecOrMat{Tl}, d::MomentOrder, l_range::Int, variatness::Symbol = :univariate)::AbstractMomentsAcc where {Tt<:AbstractFloat, Tl<:Integer}
     @boundscheck begin
         checkbounds(a, size(l, 1), 1); checkbounds(l, size(a, 1), 1)
-        if typeof(order) <: AbstractVector
-            checkbounds(a, 1, size(order, 1)); checkbounds(order, size(a, 2))
-        elseif typeof(order) <: AbstractMatrix
-            checkbounds(a, 1, size(order, 2)); checkbounds(order, 1, size(a, 2))
+        if typeof(d) <: AbstractVector
+            checkbounds(a, 1, size(d, 1)); checkbounds(d, size(a, 2))
+        elseif typeof(d) <: AbstractMatrix
+            checkbounds(a, 1, size(d, 2)); checkbounds(d, 1, size(a, 2))
         end
     end
 
     @assert get_backend(a) == get_backend(l) "a and l must have the same array backend"
 
     if variatness == :univariate
-        @assert typeof(order) == Int "order can only be non-scalar for multivariate moments"
+        @assert typeof(d) == Int "order can only be non-scalar for multivariate moments"
         
         if typeof(l) <: AbstractVector
-            m = UniVarMomentsAcc{Tt, Tl, get_backend(a)}(order, size(a, 2), l_range)
+            m = UniVarMomentsAcc{Tt, Tl, get_backend(a)}(d, size(a, 2), l_range)
         elseif typeof(l) <: AbstractMatrix
-            m = UniVarMomentsAccVecLabel{Tt, Tl, get_backend(a), size(l, 2)}(order, size(a, 2), l_range)
+            m = UniVarMomentsAccVecLabel{Tt, Tl, get_backend(a), size(l, 2)}(d, size(a, 2), l_range)
         end
 
         centered_sum_update!(m, a, l)
 
         return m
     elseif variatness == :multivariate
-
+        # TODO: move stuff from MultiVarMoments.jl to here
     end
 end
 
