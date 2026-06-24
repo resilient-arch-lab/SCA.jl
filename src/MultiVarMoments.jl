@@ -120,7 +120,4 @@ function centered_sum_update!(acc::MultiVarMomentsAcc{Tt, Tl, Ta}, traces::Abstr
 end
 
 
-
-
-
 end
