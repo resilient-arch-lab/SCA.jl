@@ -23,7 +23,7 @@ using Random
 using KernelAbstractions, Atomix
 import AcceleratedKernels as AK
 using Base: convert
-using FixedSizeArrays
+using StaticArrays
 
 abstract type AbstractMomentsAcc end
 
@@ -200,6 +200,26 @@ function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{T
             Atomix.@atomic totals[l, l_i] += 1
             for j in axes(traces, 2)
                 Atomix.@atomic sums[l, l_i, j] += traces[i, j]
+            end
+        end
+    end
+end
+
+function label_wise_sum_ak!(traces::AbstractMatrix{MArray{TSize, Tt}}, labels::AbstractMatrix{MArray{LSize, Tl}}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer, TSize, LSize}
+    @inbounds AK.foraxes(traces, 1) do ttile_idx1
+        ttile = MArray{TSize, Tt}(undef)  # allocates, but adds basically 0 overhead
+        ltile = MArray{LSize, Tl}(undef)
+        for ltile_idx in axes(labels, 2)
+            copyto!(ltile, labels[ttile_idx1, ltile_idx])
+            for lidx in axes(ltile, 2)
+                l_i = ltile[1, lidx] + 1
+                Atomix.@atomic totals[lidx + (size(ltile, 2) * (ltile_idx-1)), l_i] += 1
+                for ttile_idx2 in axes(traces, 2)
+                    copyto!(ttile, traces[ttile_idx1, ttile_idx2])
+                    for tidx in axes(ttile, 2)
+                        Atomix.@atomic sums[lidx + (size(ltile, 2) * (ltile_idx-1)), l_i, tidx + (size(ttile, 2) * (ttile_idx2-1))] += ttile[1, tidx]
+                    end
+                end
             end
         end
     end
@@ -457,6 +477,24 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarra
 end
 
 function centered_sum_update!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
+    centered_sum_update_pass_1!(acc, traces, labels)
+    centered_sum_update_pass_2!(acc, traces, labels)
+end
+
+function centered_sum_update_pass_1!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{MArray{TSize, Tt}}, labels::AbstractArray{MArray{LSize, Tl}}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD, TSize, LSize}
+    @boundscheck begin
+        checkbounds(acc._sums, LD, acc.nl, size(traces, 2))
+        checkbounds(acc._moments, LD, acc.nl, acc.order, size(traces, 2))
+        checkbounds(labels, size(traces, 1), LD)
+    end
+
+    label_wise_sum_ak!(traces, labels, acc._sums, acc._totals)
+
+    return
+end
+
+# For arrays of static arrays
+function centered_sum_update!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{MArray{TSize, Tt}}, labels::AbstractArray{MArray{LSize, Tl}}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD, TSize, LSize}
     centered_sum_update_pass_1!(acc, traces, labels)
     centered_sum_update_pass_2!(acc, traces, labels)
 end
