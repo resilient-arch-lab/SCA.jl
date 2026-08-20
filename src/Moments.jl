@@ -87,7 +87,10 @@ of observations, or a matrix where rows are equal length to observations.
 """
 function moments(a::AbstractMatrix{Tt}, l::AbstractVecOrMat{Tl}, d::MomentOrder, l_range::Int, variatness::Symbol = :univariate)::AbstractMomentsAcc where {Tt<:AbstractFloat, Tl<:Integer}
     @boundscheck begin
+        # check that `a` and `l` are sized correctly
         checkbounds(a, size(l, 1), 1); checkbounds(l, size(a, 1), 1)
+        
+        # check that order `d` is sized correctly with respect to `a`
         if typeof(d) <: AbstractVector
             checkbounds(a, 1, size(d, 1)); checkbounds(d, size(a, 2))
         elseif typeof(d) <: AbstractMatrix

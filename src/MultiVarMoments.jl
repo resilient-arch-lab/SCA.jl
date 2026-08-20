@@ -5,6 +5,8 @@ include("Utils.jl")
 include("Moments.jl")
 using .Utils, .Moments
 
+import AcceleratedKernels as AK
+
 # REFERENCE FUNCTIONS FOR TESTING
 struct MultiVarMomentsAccReference{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     totals::Ta
@@ -56,7 +58,7 @@ function _centered_sum_update_reference!(acc::MultiVarMomentsAccReference{Tt, Tl
     acc.totals .= acc._totals
 end
 
-# PRACTICAL IMPLEMENTATIONS
+# PRACTICAL IMPLEMENTATION
 struct MultiVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     totals::Ta
     SCPs::Ta  # sums of centered products
@@ -96,9 +98,28 @@ function centered_sum_multivar!(SCPs::AbstractArray{Tt, 3}, traces::AbstractMatr
     for i in axes(traces, 1)
         l_i = convert(Int32, labels[i]+1)
         centered = traces[i, :] .- means[l_i, :]
-        for oi in axes(order, 1)
-            centered_product = prod(centered .^ order[oi, :])
-            SCPs[l_i, oi, 1] += centered_product
+        for i_o in axes(order, 1)
+            centered_product = prod(centered .^ order[i_o, :])
+            SCPs[l_i, i_o, 1] += centered_product
+        end
+    end
+end
+
+function centered_sum_multivar_gpu!(SCPs::AbstractArray{Tt, 3}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, order::AbstractMatrix{Int}, means::AbstractMatrix{Tt}) where {Tt<:AbstractFloat, Tl<:Integer}
+    @boundscheck begin
+        # make sure order vector and measurement vector are of equal length
+        checkbounds(traces, 1, size(order, 2)); checkbounds(order, 1, size(traces, 2))  
+    end
+
+    # parallelize over orders (for now)
+    AK.foraxes(order, 1) do i_o
+        for i in axes(traces, 1)
+            l_i = convert(Int32, labels[i]+1)
+            centered_product = 1
+            for j in axes(traces, 2)
+                centered_product *= (traces[i, j] - means[l_i, j]) ^ order[i_o, j]
+            end
+            SCPs[l_i, i_o, 1] += centered_product
         end
     end
 end
@@ -113,7 +134,7 @@ function centered_sum_update!(acc::MultiVarMomentsAcc{Tt, Tl, Ta}, traces::Abstr
 
     # Pass 2: find means and calculate sums of centered prods
     means = acc._sums ./ acc._totals
-    centered_sum_multivar!(acc._SCPs, traces, labels, acc.α, means)
+    centered_sum_multivar_gpu!(acc._SCPs, traces, labels, acc.α, means)
 
     acc.SCPs .= acc._SCPs
     acc.totals .= acc._totals
