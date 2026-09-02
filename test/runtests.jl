@@ -26,6 +26,62 @@ using Random
     display(vec(mean(prcnt_err, dims=(1, 3))))
 end
 
+@testset "Centered products estimation satability test 1: re-ordering error vs. float length (no merging)" begin
+    NL = 2
+    a32 = rand(Float32, 20000, 20)
+    a64 = rand(Float64, 20000, 20)
+    l = rand(UInt8, 20000, NL)
+
+    n = 10
+    order = 16
+    results32 = []
+    results64 = []
+    
+    println("Dataset parameters: $(size(a32, 1))x$(size(a32, 2)) traces\t$(NL) label length")
+    println("Statistic parameters: centered product order = $(order)")
+    println("")
+    # perform `n` iterations
+    for i in 1:n
+        # estimate moments
+        m32 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, Array, NL}(order, size(a32, 2), 256)
+        m64 = Moments.UniVarMomentsAccVecLabel{Float64, UInt8, Array, NL}(order, size(a64, 2), 256)
+        Moments.centered_sum_update!(m32, a32, l)
+        Moments.centered_sum_update!(m64, a64, l)
+        
+        # store results
+        if isempty(results32)
+            results32 = m32.moments
+        else
+            results32 = cat(results32, m32.moments, dims=5)
+        end
+        if isempty(results64)
+            results64 = m64.moments
+        else
+            results64 = cat(results64, m64.moments, dims=5)
+        end
+
+        # shuffle trace rows and labels 
+        perm = randperm(size(a32, 1))
+        a32, l = SCA.TestUtils.permute_dataset_rows(a32, l, perm)
+        a64, _ = SCA.TestUtils.permute_dataset_rows(a64, l, perm)
+    end
+
+    mean32 = mean(results32, dims=5)
+    mean64 = mean(results64, dims=5)
+    std32 = sqrt.(var(results32, dims=5))
+    std64 = sqrt.(var(results64, dims=5))
+
+    println("32 bit report: ")
+    println("Std. Dev. per order (averaged over sample positions and $(n) iterations):")
+    display(vec(mean(std32, dims=(1, 2, 4))))
+    println("")
+
+    println("64 bit report: ")
+    println("Std. Dev. per order (averaged over sample positions and $(n) iterations):")
+    display(vec(mean(std64, dims=(1, 2, 4))))
+    println("")
+end
+
 @testset "Moment merging precision comparison" begin
     a = rand(10000, 20)
     l = rand(UInt8, 10000)
