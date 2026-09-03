@@ -442,7 +442,9 @@ function centered_sum_update(traces::DMatrix{Tt}, labels::DMatrix{Tl}, nl::Int, 
         for i in axes(labels.chunks, 1)
             for k in axes(labels.chunks, 2)
                 for j in axes(traces.chunks, 2)
+                    # TODO: totals can only be incremented if j=1. 
                     Dagger.@spawn centered_sum_update_pass_1!(InOut(sums.chunks[k, 1, j]), InOut(totals.chunks[k, 1]), In(traces.chunks[i, j]), In(labels.chunks[i, k]))
+                    Dagger.@spawn label_wise_sum_ak_transposed!(In(traces.chunks[i, j]), In(labels.chunks[i, k]), InOut(sums.chunks[k, 1, j]), InOut(totals.chunks[k, 1]))
                 end
             end 
         end

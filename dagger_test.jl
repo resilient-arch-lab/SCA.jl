@@ -8,7 +8,7 @@ Dagger.enable_logging!()
 
 # create distributed dataset 
 workers = [2 3]  # worker mapping must be same dimension of Blocks of arrays
-traces = rand(Blocks(5000, 1000), Float64, 10000, 2000; assignment=workers)
+traces = rand(Blocks(5000, 1000), Float64, 10000, 1000; assignment=workers)
 labels = rand(Blocks(5000, 8), UInt8, 10000, 16; assignment=workers)
 
 # call routine
