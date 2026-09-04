@@ -57,6 +57,4 @@ function Moments.centered_sum_update(traces::DMatrix{Tt}, labels::DMatrix{Tl}, n
     return moments
 end
 
-
-
 end
