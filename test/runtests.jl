@@ -1,5 +1,5 @@
-using SCA
 using Test
+using SCA
 using Statistics
 using Random
 using StatsBase
@@ -24,6 +24,33 @@ Random.seed!(12)
     @test all(.≈((mref.SCPs[1, :, :] / size(a[l.==0, :], 1)), cov_0[1, 2], rtol=0.01))
     @test all(.≈(mref.SCPs, m.SCPs))
     @test all(mref.totals .== m.totals)
+end
+
+@testset "Multivariate Moment Estimation with VecLabels" begin
+    ns = 2  # must = 2 so that covariance can be calculated from the sums of centered products
+    order = 1  # must = 1 for same reason
+    mref1 = MultiVarMoments.MultiVarMomentsAccReference{Float64, UInt8, Array}(UInt(order), ns, 256)
+    mref2 = MultiVarMoments.MultiVarMomentsAccReference{Float64, UInt8, Array}(UInt(order), ns, 256)
+    m = MultiVarMoments.MultiVarMomentsAccVecLabel{Float64, UInt8, Array}(order, ns, 256, 2)
+    a = rand(50000, ns)  # lots of measurements are required for `cov` and `centered_sum_update` to converge
+                         # since covariance is calculated per label and there are 256 labels
+    l = rand(UInt8, 50000, 2)
+
+    set_0_1 = a[l[:, 1].==0, :]
+    cov_0_1 = cov(set_0_1)
+    set_0_2 = a[l[:, 2].==0, :]
+    cov_0_2 = cov(set_0_2)
+
+    MultiVarMoments._centered_sum_update_reference!(mref1, a, vec(l[:, 1]))
+    MultiVarMoments._centered_sum_update_reference!(mref2, a, vec(l[:, 2]))
+    MultiVarMoments.centered_sum_update!(m, a, l)
+
+    @test all(.≈((mref1.SCPs[1, :, :] / size(a[l[:, 1].==0, :], 1)), cov_0_1[1, 2], rtol=0.01))
+    @test all(.≈((mref2.SCPs[1, :, :] / size(a[l[:, 2].==0, :], 1)), cov_0_2[1, 2], rtol=0.01))
+    @test all(.≈(mref1.SCPs, m.SCPs[1, :, :, :]))
+    @test all(.≈(mref2.SCPs, m.SCPs[2, :, :, :]))
+    @test all(mref1.totals .== m.totals[1, :])
+    @test all(mref2.totals .== m.totals[2, :])
 end
 
 # Test precision / stability of centered sum merging formula [Prop. 2.1, 10.2172/1028931]

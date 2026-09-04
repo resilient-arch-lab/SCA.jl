@@ -105,7 +105,7 @@ function centered_sum_multivar!(SCPs::AbstractArray{Tt, 3}, traces::AbstractMatr
     end
 end
 
-function centered_sum_multivar_gpu!(SCPs::AbstractArray{Tt, 3}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, order::AbstractMatrix{Int}, means::AbstractMatrix{Tt}) where {Tt<:AbstractFloat, Tl<:Integer}
+function centered_sum_multivar_ak!(SCPs::AbstractArray{Tt, 3}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, order::AbstractMatrix{Int}, means::AbstractMatrix{Tt}) where {Tt<:AbstractFloat, Tl<:Integer}
     @boundscheck begin
         # make sure order vector and measurement vector are of equal length
         checkbounds(traces, 1, size(order, 2)); checkbounds(order, 1, size(traces, 2))  
@@ -134,11 +134,79 @@ function centered_sum_update!(acc::MultiVarMomentsAcc{Tt, Tl, Ta}, traces::Abstr
 
     # Pass 2: find means and calculate sums of centered prods
     means = acc._sums ./ acc._totals
-    centered_sum_multivar_gpu!(acc._SCPs, traces, labels, acc.α, means)
+    centered_sum_multivar_ak!(acc._SCPs, traces, labels, acc.α, means)
 
     acc.SCPs .= acc._SCPs
     acc.totals .= acc._totals
 end
 
+
+struct MultiVarMomentsAccVecLabel{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+    totals::Ta
+    SCPs::Ta  # sums of centered products
+    α::Matrix{Int}  # order vectors (vector rows)
+    ns::UInt  # number of samples per trace (and therefore the variateness of sums of centered prods)
+    nl::UInt
+    lsize::UInt
+    _totals::Ta
+    _SCPs::Ta
+    _sums::Ta
+
+    function MultiVarMomentsAccVecLabel{Tt, Tl, Ta}(order::Union{Int, AbstractVector{Int}, AbstractMatrix{Int}}, ns::Integer, nl::Integer, lsize::Integer) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+        if typeof(order) == Int
+            α = fill!(Ta{Int, 2}(undef, 1, ns), order)  # the same order is calculated for each sample position 
+        elseif typeof(order) <: AbstractVector{Int}
+            α = reshape(order, 1, ns)
+        else typeof(order) <: AbstractMatrix{Int}
+            checkbounds(order, 1, ns)
+            α = order
+        end
+        
+        totals = fill!(Ta{UInt32, 2}(undef, lsize, nl), 0)
+        SCPs = fill!(Ta{Tt, 4}(undef, lsize, nl, size(α, 1), 1), 0)
+
+        _totals = similar(totals)
+        _SCPs = similar(SCPs)
+        _sums = Ta{Tt, 3}(undef, lsize, nl, ns)
+        new(totals, SCPs, α, ns, nl, lsize, _totals, _SCPs, _sums)
+    end
+end
+
+function centered_sum_multivar_ak!(SCPs::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}, order::AbstractMatrix{Int}, means::AbstractArray{Tt, 3}) where {Tt<:AbstractFloat, Tl<:Integer}
+    @boundscheck begin
+        # TODO
+    end
+
+    itr_view = @view SCPs[:, 1, :, 1]
+
+    # parallelize over orders (for now)
+    AK.foreachindex(itr_view) do idx
+        (l, o) = CartesianIndices(itr_view)[idx].I
+        for i in axes(traces, 1)
+            l_i = convert(Int32, labels[i, l]+1)
+            cntrd_prod = 1
+            for j in axes(traces, 2)
+                cntrd_prod *= (traces[i, j] - means[l, l_i, j]) ^ order[o, j]
+            end
+            SCPs[l, l_i, o, 1] += cntrd_prod
+        end
+    end
+end
+
+function centered_sum_update!(acc::MultiVarMomentsAccVecLabel{Tt, Tl, Ta}, traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+    fill!(acc._sums, 0)
+    fill!(acc._totals, 0)
+    fill!(acc._SCPs, 0)
+    
+    # Pass 1, calculate labels wise sums
+    Moments.label_wise_sum_ak!(traces, labels, acc._sums, acc._totals)
+
+    # Pass 2: find means and calculate sums of centered prods
+    means = acc._sums ./ acc._totals
+    centered_sum_multivar_ak!(acc._SCPs, traces, labels, acc.α, means)
+
+    acc.SCPs .= acc._SCPs
+    acc.totals .= acc._totals
+end
 
 end
