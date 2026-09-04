@@ -9,7 +9,6 @@ using .Moments
 using Statistics 
 using MultivariateStats
 using Distributions
-using Adapt
 
 # Classic Gaussian Template Attack
 mutable struct GaussianLabelTemplate{Tt<:Real, Tl<:Integer}
