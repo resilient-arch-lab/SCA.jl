@@ -421,6 +421,7 @@ function mean_helper(moments::AbstractArray{Tt, 4}, sums::AbstractArray{Tt, 3}, 
 end
 
 # distributed moment estimation
+# NOTE: right now, this function yields incorrect results when there is more than 1 chunk in the second trace dimension.
 function centered_sum_update(traces::DMatrix{Tt}, labels::DMatrix{Tl}, nl::Int, order::Int)::DArray{Tt, 4} where {Tt<:AbstractFloat, Tl<:Integer}
     @boundscheck begin
         checkbounds(labels, size(traces, 1), 1)
