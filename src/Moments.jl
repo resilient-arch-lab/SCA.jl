@@ -13,7 +13,6 @@ using Random
 using KernelAbstractions, Atomix
 import AcceleratedKernels as AK
 using Base: convert
-using FixedSizeArrays
 
 # TODO: I'm not convinced this actually needs to be parameterized on the array type, and it
 # does complicate things slightly.
