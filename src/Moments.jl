@@ -368,8 +368,6 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
     return nothing
 end
 
-# There's the potential for shards to be larger than the slice they're correlated with
-
 # First pass in two pass approach
 function centered_sum_update_pass_1!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
     @boundscheck begin
@@ -380,6 +378,11 @@ function centered_sum_update_pass_1!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarra
 
     label_wise_sum_ak_transposed!(traces, labels, acc._sums, acc._totals)
 
+    return
+end
+
+function centered_sum_update_pass_1!(sums::AbstractArray{Tt}, totals::AbstractArray{UInt32}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+    label_wise_sum_ak_transposed!(traces, labels, sums, totals)
     return
 end
 
@@ -401,9 +404,21 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarra
     return
 end
 
+function centered_sum_update_pass_2!(moments::AbstractArray{Tt}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+    centered_sum_kern_ak!(moments, traces, labels)
+    return
+end
+
 function centered_sum_update!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
     centered_sum_update_pass_1!(acc, traces, labels)
     centered_sum_update_pass_2!(acc, traces, labels)
+end
+
+function centered_sum_update(traces::Matrix{Tt}, labels::Matrix{Tl}, nl::Int, order::Int)::Array{Tt, 4} where {Tt<:AbstractFloat, Tl<:Integer}
+    m = UniVarMomentsAccVecLabel{Tt, Tl, Array, size(labels, 2)}
+    centered_sum_update_pass_1!(m, traces, labels)
+    centered_sum_update_pass_2!(m, traces, labels)
+    return m.moments
 end
 
 # Precision (even with Float64) seems to degrade from performing the same 
