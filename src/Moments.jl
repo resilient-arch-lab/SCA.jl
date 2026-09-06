@@ -588,4 +588,20 @@ function get_mean_and_var(m::UniVarMomentsAcc, d::Int)
     end
 end
 
+function get_mean_and_var(m::UniVarMomentsAccVecLabel, d::Int)
+    if d == 1
+        @inbounds μ = @view m.moments[:, :, 1, :]
+        @inbounds σ2 = m.moments[:, :, 2, :] ./ m.totals
+        return μ, σ2
+    elseif d == 2
+        @inbounds μ = m.moments[:, :, 2, :] ./ m.totals
+        @inbounds σ2 = m.moments[:, :, 4, :] ./ m.totals
+        return μ, σ2
+    elseif d > 2
+        @inbounds μ = (m.moments[:, :, d, :] ./ m.totals) ./ ((m.moments[:, :, 2, :] ./ m.totals).^(d/2))
+        @inbounds σ2 = ((m.moments[:, :, 2*d, :] ./ m.totals) .- ((m.moments[:, :, d, :] ./ m.totals).^2)) ./ ((m.moments[:, :, 2, :] ./ m.totals).^d)
+        return μ, σ2
+    end
+end
+
 end  # module Moments

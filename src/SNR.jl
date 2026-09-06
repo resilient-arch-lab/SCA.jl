@@ -61,6 +61,15 @@ mutable struct SNROrdered{Tt<:AbstractFloat, Tl<:Integer}
     end
 end
 
+struct SNRVecLabel{Tt<:AbstractFloat, Tl<:Integer, LD}
+    moments::UniVarMomentsAccVecLabel{Tt, Tl, Array, LD}
+    
+    function SNRVecLabel{Tt, Tl, LD}(ns::Int, nl::Int) where {Tt<:AbstractFloat, Tl<:Integer, LD}
+        moments = UniVarMomentsAccVecLabel{Tt, Tl, Array, LD}(2, ns, nl)
+        new(moments)
+    end
+end
+
 function SNR_fit!(snr::SNRBasic{Tt, Tl}, traces, labels) where {Tt<:Real, Tl<:Real}
     samples_per_thread = cld(size(traces, 2), Threads.nthreads())
     trace_tiles = tiled_view(traces, (size(traces, 1), samples_per_thread))
@@ -83,7 +92,7 @@ function SNR_fit!(snr::SNRBasic{Tt, Tl}, traces, labels) where {Tt<:Real, Tl<:Re
     end
 end
 
-function SNR_fit!(snr::Union{SNRMoments{Tt, Tl}, SNROrdered{Tt, Tl}}, traces, labels) where {Tt<:Real, Tl<:Real}
+function SNR_fit!(snr::Union{SNRMoments{Tt, Tl}, SNROrdered{Tt, Tl}, SNRVecLabel{Tt, Tl, LD}}, traces, labels) where {Tt<:Real, Tl<:Real, LD}
     centered_sum_update!(snr.moments, traces, labels)
 end
 
@@ -136,5 +145,13 @@ function SNR_finalize(snr::SNROrdered)::Vector
     noises = mean(σ2, dims=1)
     signals ./ noises
 end
+
+function SNR_finalize(snr::SNRVecLabel{Tt, Tl, LD})::Matrix where {Tt<:Real, Tl<:Integer, LD}
+    μ, σ2 = get_mean_and_var(snr.moments, 1)
+    signals = var(μ, dims=2)
+    noises = mean(σ2, dims=2)
+    dropdims(signals ./ noises, dims=2)
+end
+
 
 end  # module SNR
