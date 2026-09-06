@@ -3,7 +3,7 @@ Signal to Noise Ratio (SNR)
 """
 
 module SNR
-export SNRBasic, SNRMoments, SNROrdered, SNR_fit!, SNR_finalize
+export SNRBasic, SNRMoments, SNROrdered, SNRVecLabel, SNR_fit!, SNR_finalize
 
 include("Utils.jl")
 using .Utils
