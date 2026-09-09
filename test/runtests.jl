@@ -83,7 +83,7 @@ end
     println("")
 end
 
-@testset "Centered products estimation satability test 1: RMS error vs. float length (no merging)" begin
+@testset "Centered products estimation satability test 2: RMS error vs. float length (no merging)" begin
     setprecision(BigFloat, 256)
     prec = precision(BigFloat)
     println("Ground truth float precision: $(prec)")
@@ -151,6 +151,87 @@ end
     println("Maximum RMS error: ")
     display(vec(maximum(rms64, dims=(1, 2, 4)))')
     println("")
+end
+
+@testset "Centered products estimation satability test 3: RMS error vs. float length and number of merges" begin
+    setprecision(BigFloat, 256)
+    prec = precision(BigFloat)
+    println("Ground truth float precision: $(prec)")
+    
+    NL = 2
+    a32 = rand(Float32, 20000, 20)
+    a64 = Float64.(a32)
+    a256 = big.(a64)
+    l = rand(UInt8, 20000, NL)
+
+    batch_settings = [1, 2, 4, 10]
+    order = 16
+    
+    ref_results = Dict{Int, AbstractArray}()
+
+    println("Dataset parameters: $(size(a32, 1))x$(size(a32, 2)) traces\t$(NL) label length")
+    println("Statistic parameters: centered product order = $(order)")
+    println("")
+
+    for batches in batch_settings
+        # initialize accumulator structs
+        m256 = Moments.UniVarMomentsAccVecLabel{BigFloat, UInt8, Array, NL}(order, size(a256, 2), 256)
+        m64 = Moments.UniVarMomentsAccVecLabel{Float64, UInt8, Array, NL}(order, size(a64, 2), 256)
+        m32 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, Array, NL}(order, size(a32, 2), 256)
+        
+        batch_size = (Int(ceil(size(a32, 1) / batches)), size(a32, 2))
+
+        a32_batches = Utils.tiled_view(a32, batch_size)
+        a64_batches = Utils.tiled_view(a64, batch_size)
+        a256_batches = Utils.tiled_view(a256, batch_size)
+        l_batches = Utils.tiled_view(l, batch_size)
+        
+        # run batch workloads
+        for batch in 1:batches
+            Moments.centered_sum_update!(m256, a256_batches[batch, 1], l_batches[batch, 1])
+            Moments.centered_sum_update!(m64, a64_batches[batch, 1], l_batches[batch, 1])
+            Moments.centered_sum_update!(m32, a32_batches[batch, 1], l_batches[batch, 1])
+        end
+        
+        # get final results
+        results32 = m32.moments
+        results64 = m64.moments
+        results256 = m256.moments
+
+        # analysis
+        if batches == 1
+            ref_results[32] = results32
+            ref_results[64] = results64
+            ref_results[256] = results256
+        else
+            rms32 = sqrt.((ref_results[32] .- results32).^2)
+            rms64 = sqrt.((ref_results[64] .- results64).^2)
+            rms256 = sqrt.((ref_results[256] .- results256).^2)
+
+            mean32 = vec(mean(rms32, dims=(1, 2, 4)))'
+            max32 = vec(maximum(rms32, dims=(1, 2, 4)))'
+            mean64 = vec(mean(rms64, dims=(1, 2, 4)))'
+            max64 = vec(maximum(rms64, dims=(1, 2, 4)))'
+            mean256 = vec(mean(rms256, dims=(1, 2, 4)))'
+            max256 = vec(maximum(rms256, dims=(1, 2, 4)))'
+
+            println("$(batches) Batches:")
+            println("\t32 bit mean and max errors vs reference:")
+            display(mean32)
+            display(max32)
+            println("\t64 bit mean and max errors vs reference:")
+            display(mean64)
+            display(max64)
+            println("\t256 bit mean and max errors vs reference:")
+            display(mean256)
+            display(max256)
+            println("")
+        end
+    end
+
+
+
+
 end
 
 @testset "Moment merging precision comparison" begin

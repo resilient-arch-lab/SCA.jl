@@ -324,13 +324,14 @@ end
 #   Works with CUDA, weird...
 #   - It happens during merging, on init
 function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    # initialize intermediate values (these could be allocated on `acc` construction)
     fill!(acc._sums, 0)
     fill!(acc._moments, 0)
     fill!(acc._totals, 0)
 
-    if get_backend(traces) != get_backend(acc._sums) || get_backend(labels) != get_backend(acc._sums)
+    if get_backend(traces) != get_backend(acc._sums)
         traces = Tarray(traces)
+    end
+    if get_backend(labels) != get_backend(acc._sums)
         labels = Tarray(labels)
     end
 
@@ -346,9 +347,7 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
     @. acc._moments[:, 1, :] = acc._sums / acc._totals
 
     # compute centered sums
-    # centered_sum_kern_ak!(acc._moments, traces, labels)
-    # about 30% of centered_sum_update! runtime
-    centered_sum_kern_ak_transposed!(acc._moments, traces, labels)
+    centered_sum_kern_ak_transposed!(acc._moments, traces, labels)  # about 30% of centered_sum_update! runtime
 
     # merge centered sum estimations
     init_ls = acc.totals .== 0
@@ -399,8 +398,24 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarra
 
     centered_sum_kern_ak!(acc._moments, traces, labels)
 
-    acc.moments .= acc._moments
-    acc.totals .= acc._totals
+    # acc.moments .= acc._moments
+    # acc.totals .= acc._totals
+
+    # merge centered sum estimations
+    init_ls = acc.totals .== 0
+    update_ls = acc.totals .!= 0
+    if any(init_ls)
+        @inbounds acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
+        @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
+    end
+    if any(update_ls)
+        Threads.@threads for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
+            @inbounds merge_from_ak!(view(acc.moments, l, :, :), view(acc.totals, l), view(acc._moments, l, :, :), view(acc._totals, l))
+            # roughly 40% of centered_sum_update! runtime (was 60 before I removed the δ_pows allocation)
+            # Also, this is runtime dispatched and garbage collected?
+        end
+        @inbounds acc.totals[update_ls] .+= acc._totals[update_ls]
+    end
 
     return
 end
@@ -416,7 +431,7 @@ function centered_sum_update!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD},
 end
 
 function centered_sum_update(traces::Matrix{Tt}, labels::Matrix{Tl}, nl::Int, order::Int)::Array{Tt, 4} where {Tt<:AbstractFloat, Tl<:Integer}
-    m = UniVarMomentsAccVecLabel{Tt, Tl, Array, size(labels, 2)}
+    m = UniVarMomentsAccVecLabel{Tt, Tl, Array, size(labels, 2)}(order, size(traces, 2), nl)
     centered_sum_update_pass_1!(m, traces, labels)
     centered_sum_update_pass_2!(m, traces, labels)
     return m.moments
@@ -538,6 +553,8 @@ function merge_from_kern!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{
     end
 end
 
+# TODO: This seems to be consistently innaccurate, not due to floating point precision issues. I should
+# figure out why that is.  
 function merge_from_ak!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UInt32, 0}, M_new::AbstractArray{Tt, 2}, total_new::AbstractArray{UInt32, 0}) where { Tt<:AbstractFloat }
     @boundscheck begin
         checkbounds(M_new, size(M_old)...)
@@ -560,12 +577,10 @@ function merge_from_ak!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UI
                 tmp1 = as_input1[p-k, j] * ((-total_new[1]/total_result[1])^k)
                 tmp2 = as_input2[p-k, j] * ((total_old[1]/total_result[1])^k)
                 tmp3 = tmp1 + tmp2
-                # to_update1[i] += (δ_pows[k, i] * cst) * tmp3
                 to_update1[j] += (δ^k * cst) * tmp3
             end
             tmp = (1/(total_new[1]^(p-1))) - ((-1/total_old[1])^(p-1))  # about 20% of runtime
-            tmp *= ((total_old[1] * total_new[1])/total_result[1])^p  # another 20% of the runtime, mostly the exponent (so thats fine)
-
+            tmp *= ((total_old[1] * total_new[1])/total_result[1])^p  # another 20% of the runtime, mostly the exponent
             to_update1[j] += δ^p * tmp
         end
         M_old[1, j] += (δ * (total_new[1]/total_result[1]))  # update mean seperately
