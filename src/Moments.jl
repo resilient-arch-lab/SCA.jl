@@ -386,6 +386,7 @@ function centered_sum_update_pass_1!(sums::AbstractArray{Tt}, totals::AbstractAr
     return
 end
 
+# TODO: Make this support merging
 # Second pass in two pass approach
 function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
     @boundscheck begin
@@ -544,30 +545,30 @@ function merge_from_ak!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UI
     end
     
     order = size(M_old, 1)
-    @inbounds AK.foraxes(M_old, 2) do i
-        δ = M_new[1, i] - M_old[1, i]
+    @inbounds AK.foraxes(M_old, 2) do j
+        δ = M_new[1, j] - M_old[1, j]
         total_result = total_old[1] + total_new[1]
 
         for p in order:-1:2
             (as_input1, to_update1) = view(M_old, 1:p-1, :), view(M_old, p, :)
             (as_input2, to_update2) = view(M_new, 1:p-1, :), view(M_new, p, :)
 
-            to_update1[i] += to_update2[i] 
+            to_update1[j] += to_update2[j] 
 
             for k in 1:p-2
                 cst = binomial(Int32(k), Int32(p))  # explicity Int32 cast avoids unnecessary use of arbitrary precision arithmetic 
-                tmp1 = as_input1[p-k, i] * ((-total_new[1]/total_result[1])^k)
-                tmp2 = as_input2[p-k, i] * ((total_old[1]/total_result[1])^k)
+                tmp1 = as_input1[p-k, j] * ((-total_new[1]/total_result[1])^k)
+                tmp2 = as_input2[p-k, j] * ((total_old[1]/total_result[1])^k)
                 tmp3 = tmp1 + tmp2
                 # to_update1[i] += (δ_pows[k, i] * cst) * tmp3
-                to_update1[i] += (δ^k * cst) * tmp3
+                to_update1[j] += (δ^k * cst) * tmp3
             end
             tmp = (1/(total_new[1]^(p-1))) - ((-1/total_old[1])^(p-1))  # about 20% of runtime
             tmp *= ((total_old[1] * total_new[1])/total_result[1])^p  # another 20% of the runtime, mostly the exponent (so thats fine)
 
-            to_update1[i] += δ^p * tmp
+            to_update1[j] += δ^p * tmp
         end
-        M_old[1, i] += (δ * (total_new[1]/total_result[1]))  # update mean seperately
+        M_old[1, j] += (δ * (total_new[1]/total_result[1]))  # update mean seperately
     end
     return nothing
 end
