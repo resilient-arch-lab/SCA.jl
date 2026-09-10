@@ -375,6 +375,10 @@ function centered_sum_update_pass_1!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarra
         checkbounds(labels, size(traces, 1), LD)
     end
 
+    fill!(acc._moments, 0)
+    fill!(acc._sums, 0)
+    fill!(acc._totals, 0)
+
     label_wise_sum_ak_transposed!(traces, labels, acc._sums, acc._totals)
 
     return
@@ -398,9 +402,6 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarra
 
     centered_sum_kern_ak!(acc._moments, traces, labels)
 
-    # acc.moments .= acc._moments
-    # acc.totals .= acc._totals
-
     # merge centered sum estimations
     init_ls = acc.totals .== 0
     update_ls = acc.totals .!= 0
@@ -409,10 +410,8 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarra
         @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
     end
     if any(update_ls)
-        Threads.@threads for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
+        for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
             @inbounds merge_from_ak!(view(acc.moments, l, :, :), view(acc.totals, l), view(acc._moments, l, :, :), view(acc._totals, l))
-            # roughly 40% of centered_sum_update! runtime (was 60 before I removed the δ_pows allocation)
-            # Also, this is runtime dispatched and garbage collected?
         end
         @inbounds acc.totals[update_ls] .+= acc._totals[update_ls]
     end
@@ -562,27 +561,37 @@ function merge_from_ak!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UI
     end
     
     order = size(M_old, 1)
+
     @inbounds AK.foraxes(M_old, 2) do j
         δ = M_new[1, j] - M_old[1, j]
         total_result = total_old[1] + total_new[1]
 
+        # for p in 2:order
         for p in order:-1:2
-            (as_input1, to_update1) = view(M_old, 1:p-1, :), view(M_old, p, :)
-            (as_input2, to_update2) = view(M_new, 1:p-1, :), view(M_new, p, :)
+            M_old[p, j] += M_new[p, j]
 
-            to_update1[j] += to_update2[j] 
+            tmp = (1/(total_new[1]^(p-1))) - ((-1/total_old[1])^(p-1))  # this is how its shown in the paper
+            # tmp = ((1/total_new[1])^(p-1)) - ((-1/total_old[1])^(p-1))  # this is not how its shown in the paper, but is how scalib implements it.
+            # ^ this way also makes orders over 7 not constantly Inf. 
+            tmp *= (((total_old[1] * total_new[1])/total_result[1]) * δ)^p
+            M_old[p, j] += tmp
 
-            for k in 1:p-2
-                cst = binomial(Int32(k), Int32(p))  # explicity Int32 cast avoids unnecessary use of arbitrary precision arithmetic 
-                tmp1 = as_input1[p-k, j] * ((-total_new[1]/total_result[1])^k)
-                tmp2 = as_input2[p-k, j] * ((total_old[1]/total_result[1])^k)
+            # This loop seems to be where the error is coming from. orders 1 and 2 are accurate but 3 is where extreme error starts happening
+            # Error also seems to be worst at orders 3, 5, 7, ...
+            # At orders 3, 5, 7, ..., the error appears to be more data dependent than the subtle error at even orders
+            # Error seems to decrease on average as order rises beyond 3. 
+            M_tmp = 0
+            # for k in 1:p-2
+            for k in p-2:-1:1
+                cst = binomial(Int32(k), Int32(p))  # explicit Int32 cast avoids unnecessary use of arbitrary precision arithmetic 
+                tmp1 = M_old[p-k, j] * ((-total_new[1]/total_result[1])^k)
+                tmp2 = M_new[p-k, j] * ((total_old[1]/total_result[1])^k)
                 tmp3 = tmp1 + tmp2
-                to_update1[j] += (δ^k * cst) * tmp3
+                M_tmp += (δ^k) * cst * tmp3
             end
-            tmp = (1/(total_new[1]^(p-1))) - ((-1/total_old[1])^(p-1))  # about 20% of runtime
-            tmp *= ((total_old[1] * total_new[1])/total_result[1])^p  # another 20% of the runtime, mostly the exponent
-            to_update1[j] += δ^p * tmp
+            M_old[p, j] += M_tmp
         end
+
         M_old[1, j] += (δ * (total_new[1]/total_result[1]))  # update mean seperately
     end
     return nothing

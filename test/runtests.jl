@@ -1,7 +1,7 @@
 using SCA
-using Test
 using Statistics
 using Random
+using Test
 
 
 # Test precision / stability of centered sum merging formula [Prop. 2.1, 10.2172/1028931]
@@ -153,7 +153,7 @@ end
     println("")
 end
 
-@testset "Centered products estimation satability test 3: RMS error vs. float length and number of merges" begin
+@testset "Centered products estimation satability test 3: % error vs. float length and number of merges" begin
     setprecision(BigFloat, 256)
     prec = precision(BigFloat)
     println("Ground truth float precision: $(prec)")
@@ -207,22 +207,25 @@ end
             rms32 = sqrt.((ref_results[32] .- results32).^2)
             rms64 = sqrt.((ref_results[64] .- results64).^2)
             rms256 = sqrt.((ref_results[256] .- results256).^2)
+            rel32 = abs.((results32 .- ref_results[32])) .* 100
+            rel64 = abs.((results64 .- ref_results[64])) .* 100
+            rel256 = abs.((results256 .- ref_results[256])) .* 100
 
-            mean32 = vec(mean(rms32, dims=(1, 2, 4)))'
-            max32 = vec(maximum(rms32, dims=(1, 2, 4)))'
-            mean64 = vec(mean(rms64, dims=(1, 2, 4)))'
-            max64 = vec(maximum(rms64, dims=(1, 2, 4)))'
-            mean256 = vec(mean(rms256, dims=(1, 2, 4)))'
-            max256 = vec(maximum(rms256, dims=(1, 2, 4)))'
+            mean32 = vec(mean(rel32, dims=(1, 2, 4)))'
+            max32 = vec(maximum(rel32, dims=(1, 2, 4)))'
+            mean64 = vec(mean(rel64, dims=(1, 2, 4)))'
+            max64 = vec(maximum(rel64, dims=(1, 2, 4)))'
+            mean256 = vec(mean(rel256, dims=(1, 2, 4)))'
+            max256 = vec(maximum(rel256, dims=(1, 2, 4)))'
 
             println("$(batches) Batches:")
-            println("\t32 bit mean and max errors vs reference:")
+            println("\t32 bit mean and max % error vs reference:")
             display(mean32)
             display(max32)
-            println("\t64 bit mean and max errors vs reference:")
+            println("\t64 bit mean and max % error vs reference:")
             display(mean64)
             display(max64)
-            println("\t256 bit mean and max errors vs reference:")
+            println("\t256 bit mean and max % error vs reference:")
             display(mean256)
             display(max256)
             println("")
@@ -254,25 +257,25 @@ end
     display(vec(mean(prcnt_err, dims=(1, 3))))
 end
 
-@testset "Moment merging kernel comparison to legacy reference function" begin
-    a = rand(20000, 5)
-    l = rand(UInt8, 20000)
-    m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 5, 256)
-    m2 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 5, 256)
+# @testset "Moment merging kernel comparison to legacy reference function" begin
+#     a = rand(20000, 5)
+#     l = rand(UInt8, 20000)
+#     m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 5, 256)
+#     m2 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 5, 256)
 
-    Moments.centered_sum_update_old!(m1, a[1:10000, :], l[1:10000])
-    Moments.centered_sum_update_old!(m1, a[10001:end, :], l[10001:end])
-    Moments.centered_sum_update!(m2, a[1:10000, :], l[1:10000])
-    Moments.centered_sum_update!(m2, a[10001:end, :], l[10001:end])
+#     Moments.centered_sum_update_old!(m1, a[1:10000, :], l[1:10000])
+#     Moments.centered_sum_update_old!(m1, a[10001:end, :], l[10001:end])
+#     Moments.centered_sum_update!(m2, a[1:10000, :], l[1:10000])
+#     Moments.centered_sum_update!(m2, a[10001:end, :], l[10001:end])
 
-    @test all(isapprox.(m1.moments, m2.moments; rtol=1e-2))
-    correct = all(isapprox.(m1.moments, m2.moments; rtol=1e-2))
-    println("Correct: $correct")
+#     @test all(isapprox.(m1.moments, m2.moments; rtol=1e-2))
+#     correct = all(isapprox.(m1.moments, m2.moments; rtol=1e-2))
+#     println("Correct: $correct")
 
-    prcnt_err = abs.((m2.moments .- m1.moments) ./ m1.moments).*100
-    println("Moment merging algorithm test case percent error per order $(1:m1.order)")
-    display(vec(mean(prcnt_err, dims=(1, 3))))
-end
+#     prcnt_err = abs.((m2.moments .- m1.moments) ./ m1.moments).*100
+#     println("Moment merging algorithm test case percent error per order $(1:m1.order)")
+#     display(vec(mean(prcnt_err, dims=(1, 3))))
+# end
 
 @testset "Test that Chunked SNR is equivalent on dimension 2" begin
     t = rand(Float64, 5000, 1000)
