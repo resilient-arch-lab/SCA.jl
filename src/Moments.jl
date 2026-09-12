@@ -553,7 +553,7 @@ function merge_from_kern!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{
 end
 
 # TODO: This seems to be consistently innaccurate, not due to floating point precision issues. I should
-# figure out why that is.  
+# figure out why that is.
 function merge_from_ak!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UInt32, 0}, M_new::AbstractArray{Tt, 2}, total_new::AbstractArray{UInt32, 0}) where { Tt<:AbstractFloat }
     @boundscheck begin
         checkbounds(M_new, size(M_old)...)
@@ -566,30 +566,30 @@ function merge_from_ak!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UI
         δ = M_new[1, j] - M_old[1, j]
         total_result = total_old[1] + total_new[1]
 
-        # for p in 2:order
         for p in order:-1:2
             M_old[p, j] += M_new[p, j]
-
-            tmp = (1/(total_new[1]^(p-1))) - ((-1/total_old[1])^(p-1))  # this is how its shown in the paper
-            # tmp = ((1/total_new[1])^(p-1)) - ((-1/total_old[1])^(p-1))  # this is not how its shown in the paper, but is how scalib implements it.
-            # ^ this way also makes orders over 7 not constantly Inf. 
-            tmp *= (((total_old[1] * total_new[1])/total_result[1]) * δ)^p
-            M_old[p, j] += tmp
 
             # This loop seems to be where the error is coming from. orders 1 and 2 are accurate but 3 is where extreme error starts happening
             # Error also seems to be worst at orders 3, 5, 7, ...
             # At orders 3, 5, 7, ..., the error appears to be more data dependent than the subtle error at even orders
-            # Error seems to decrease on average as order rises beyond 3. 
+            # Error seems to decrease on average as order rises beyond 3.
             M_tmp = 0
-            # for k in 1:p-2
-            for k in p-2:-1:1
-                cst = binomial(Int32(k), Int32(p))  # explicit Int32 cast avoids unnecessary use of arbitrary precision arithmetic 
+            # for k in p-2:-1:1
+            for k in 1:p-2
+                k_choose_p = binomial(Int32(p), Int32(k))  # explicit Int32 cast avoids unnecessary use of arbitrary precision arithmetic 
                 tmp1 = M_old[p-k, j] * ((-total_new[1]/total_result[1])^k)
                 tmp2 = M_new[p-k, j] * ((total_old[1]/total_result[1])^k)
                 tmp3 = tmp1 + tmp2
-                M_tmp += (δ^k) * cst * tmp3
+                M_tmp += ((δ^k) * k_choose_p) * tmp3
             end
             M_old[p, j] += M_tmp
+
+            # tmp = (1/(total_new[1]^(p-1))) - ((-1/total_old[1])^(p-1))  # this is how its shown in the paper
+            tmp = ((1/total_new[1])^(p-1)) - ((-1/total_old[1])^(p-1))  # this is not how its shown in the paper, but is how scalib implements it.
+            # ^ This improves numerical stability at orders > 4 by avoiding division of 1 by total_new[1]^(p-1), which is quite large at p>4
+            tmp *= (((total_old[1] * total_new[1])/total_result[1]) * δ)^p
+            # with batches of size 10000, this implementation is stable with float64 up to at least order 16 within 5 decimal places 
+            M_old[p, j] += tmp
         end
 
         M_old[1, j] += (δ * (total_new[1]/total_result[1]))  # update mean seperately
