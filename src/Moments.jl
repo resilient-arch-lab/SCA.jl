@@ -584,16 +584,17 @@ function merge_from_ak!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UI
             end
             M_old[p, j] += M_tmp
 
+            # with batches of size 10000, this section is stable with float64 up to at least order 16 within 5 decimal places
             # tmp = (1/(total_new[1]^(p-1))) - ((-1/total_old[1])^(p-1))  # this is how its shown in the paper
             tmp = ((1/total_new[1])^(p-1)) - ((-1/total_old[1])^(p-1))  # this is not how its shown in the paper, but is how scalib implements it.
             # ^ This improves numerical stability at orders > 4 by avoiding division of 1 by total_new[1]^(p-1), which is quite large at p>4
             tmp *= (((total_old[1] * total_new[1])/total_result[1]) * δ)^p
-            # with batches of size 10000, this implementation is stable with float64 up to at least order 16 within 5 decimal places 
             M_old[p, j] += tmp
         end
 
         M_old[1, j] += (δ * (total_new[1]/total_result[1]))  # update mean seperately
     end
+    
     return nothing
 end
 
