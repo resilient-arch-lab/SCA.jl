@@ -234,24 +234,38 @@ function centered_sum_kern_ak!(moments::AbstractArray{Tt, 4}, traces::AbstractMa
     order = size(moments, 3)
     itr_view = @view moments[:, 1, 1, :]
 
-    traces_per_thread = 10
-    trace_tiles = tiled_view(traces, (traces_per_thread, size(traces, 2)))
-    ntiles = size(trace_tiles, 1)
-    label_tiles = tiled_view(labels, (traces_per_thread, size(labels, 2)))
+    # traces_per_thread = 10
+    # trace_tiles = tiled_view(traces, (traces_per_thread, size(traces, 2)))
+    # ntiles = size(trace_tiles, 1)
+    # label_tiles = tiled_view(labels, (traces_per_thread, size(labels, 2)))
+
+    # @inbounds AK.foreachindex(itr_view) do idx
+    #     (l, j) = CartesianIndices(itr_view)[idx].I
+    #     for ti in 1:ntiles
+    #         tile_offset = traces_per_thread * (ti-1)
+    #         for i in 1:traces_per_thread
+    #             t_i = traces[tile_offset + i, j]
+    #             l_i = convert(Int32, labels[tile_offset + i, l]+1)
+    #             t_update = t_i - moments[l, l_i, 1, j]
+    #             pow = t_update
+    #             for d in 2:order
+    #                 pow *= t_update
+    #                 moments[l, l_i, d, j] += pow
+    #             end
+    #         end
+    #     end
+    # end
 
     @inbounds AK.foreachindex(itr_view) do idx
         (l, j) = CartesianIndices(itr_view)[idx].I
-        for ti in 1:ntiles
-            tile_offset = traces_per_thread * (ti-1)
-            for i in 1:traces_per_thread
-                t_i = traces[tile_offset + i, j]
-                l_i = convert(Int32, labels[tile_offset + i, l]+1)
-                t_update = t_i - moments[l, l_i, 1, j]
-                pow = t_update
-                for d in 2:order
-                    pow *= t_update
-                    moments[l, l_i, d, j] += pow
-                end
+        for ti in axes(traces, 1)
+            t_i = traces[ti, j]
+            l_i = convert(Int32, labels[ti, l]+1)
+            t_update = t_i - moments[l, l_i, 1, j]
+            pow = t_update
+            for d in 2:order
+                pow *= t_update
+                moments[l, l_i, d, j] += pow
             end
         end
     end
@@ -406,14 +420,14 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarra
     init_ls = acc.totals .== 0
     update_ls = acc.totals .!= 0
     if any(init_ls)
-        @inbounds acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
-        @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
+        @inbounds @views acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
+        @inbounds @views acc.totals[init_ls] .= acc._totals[init_ls]
     end
     if any(update_ls)
         for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
             @inbounds merge_from_ak!(view(acc.moments, l, :, :), view(acc.totals, l), view(acc._moments, l, :, :), view(acc._totals, l))
         end
-        @inbounds acc.totals[update_ls] .+= acc._totals[update_ls]
+        @inbounds @views acc.totals[update_ls] .+= acc._totals[update_ls]
     end
 
     return
@@ -562,7 +576,7 @@ function merge_from_ak!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UI
     
     order = size(M_old, 1)
 
-    @inbounds AK.foraxes(M_old, 2) do j
+    @inbounds AK.foraxes(M_old, 2) do j  # most allocations here 
         δ = M_new[1, j] - M_old[1, j]
         total_result = total_old[1] + total_new[1]
 
