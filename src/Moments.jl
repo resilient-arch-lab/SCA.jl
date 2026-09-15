@@ -234,11 +234,6 @@ function centered_sum_kern_ak!(moments::AbstractArray{Tt, 4}, traces::AbstractMa
     order = size(moments, 3)
     itr_view = @view moments[:, 1, 1, :]
 
-    # traces_per_thread = 10
-    # trace_tiles = tiled_view(traces, (traces_per_thread, size(traces, 2)))
-    # ntiles = size(trace_tiles, 1)
-    # label_tiles = tiled_view(labels, (traces_per_thread, size(labels, 2)))
-
     @inbounds AK.foreachindex(itr_view) do idx
         (l, j) = CartesianIndices(itr_view)[idx].I
         for ti in axes(traces, 1)
@@ -371,7 +366,7 @@ function centered_sum_update_pass_1!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarra
         checkbounds(acc._moments, LD, acc.nl, acc.order, size(traces, 2))
         checkbounds(labels, size(traces, 1), LD)
     end
-
+    
     fill!(acc._moments, 0)
     fill!(acc._sums, 0)
     fill!(acc._totals, 0)
