@@ -138,30 +138,6 @@ end
     end
 end
 
-# Centered sum update kernel
-# Depricated in favor of AcceleratedKernels kernels (centered_sum_kern_ak!)
-@kernel function centered_sum_kern!(moments::AbstractArray{Tt, 3}, traces::AbstractArray, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
-    i, j = @index(Local, NTuple)  # i: assumed to be 1, j: trace_y_offset_local
-    I, J = @index(Global, NTuple)  # I: trace, J: trace_y_offset_global
-
-    order = @uniform size(moments, 2)
-    tmp_shape = @uniform @groupsize()
-    t = @localmem Tt tmp_shape
-    pow = @localmem Tt tmp_shape
-
-    @inbounds @private l_i = unsafe_trunc(Int, labels[I]+1)
-    @inbounds @private t_i = convert(Tt, traces[I, J])
-
-    @inbounds @private t_update = t_i - moments[l_i, 1, J]
-    @inbounds t[i, j] = t_update
-    @inbounds pow[i, j] = t[i, j]
-
-    for d in 2:order
-        @inbounds pow[i, j] *= t[i, j]
-        @inbounds Atomix.@atomic moments[l_i, d, J] += pow[i, j]
-    end
-end
-
 function centered_sum_kern_ak!(moments::AbstractArray{Tt, 3}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     order = size(moments, 2)
 
