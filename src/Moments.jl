@@ -57,29 +57,6 @@ struct UniVarMomentsAccVecLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:Abstract
     end
 end
 
-# works on CPU and GPU
-# Depricated in favor of AcceleratedKernels kernels (label_wise_sum_ak!)
-@kernel function label_wise_sum_shared!(@Const(traces::AbstractMatrix{Tt}), @Const(labels::AbstractVector{Tl}), sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
-    I, J = @index(Global, NTuple)  # I: trace, J: y_offset
-    i, j = @index(Local, NTuple)
-
-    nt = @uniform @groupsize()[1]  # this is compile time constant if the kernel is compiled with a static workgroup size
-    ns = @uniform @groupsize()[2]
-    t_sh = @localmem Tt (nt, ns)
-    l_sh = @localmem Int32 nt
-    @inbounds t_sh[i, j] = convert(Tt, traces[I, J])
-    if j == 1
-        @inbounds l_sh[i] = convert(Int32, labels[I]+1)
-    end
-    @synchronize()
-
-    @inbounds l_idx = l_sh[i]
-    @inbounds Atomix.@atomic sums[l_idx, J] += t_sh[i, j]
-    if J == 1
-        @inbounds Atomix.@atomic totals[l_idx] += 1
-    end
-end
-
 # Works on CPU and GPU
 function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     @inbounds AK.foraxes(traces, 1) do i
