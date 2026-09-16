@@ -148,26 +148,15 @@ function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{T
     end
 end
 
-function label_wise_sum_cpu!(traces::AbstractArray, labels::AbstractArray, sums::AbstractArray, totals::AbstractArray)
-    # each thread gets a column of data
-    samples_per_thread = cld(size(traces, 2), Threads.nthreads())
-    trace_tiles = tiled_view(traces, (size(traces, 1), samples_per_thread))
-    sum_tiles = tiled_view(sums, (size(traces, 1), samples_per_thread))
-    
-    Threads.@threads for tile_idx in axes(trace_tiles, 2)
-        trace_tile = trace_tiles[1, tile_idx]
-        sum_tile = sum_tiles[1, tile_idx]
-
-        if tile_idx == 1
-            for trace in axes(traces, 1)
-                @inbounds l = Int(labels[trace]) + 1
-                @inbounds totals[l] += 1
+# simple, sequential label-wise sum op for cpu
+@inline function label_wise_sum!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix) where {Tt<:AbstractFloat, Tl<:Integer}
+    for i in axes(traces, 1)
+        for l in axes(labels, 2)
+            l_i = convert(Int, labels[i, l])+1
+            for j in axes(traces, 2)
+                sums[l, l_i, j] += traces[i, j]
             end
-        end
-
-        for trace in axes(traces, 1)
-            @inbounds l = Int(labels[trace]) + 1
-            @inbounds @views sum_tile[l, :] .+= trace_tile[trace, :]
+            totals[l, l_i] += 1
         end
     end
 end
@@ -267,23 +256,20 @@ function centered_sum_kern_ak_atomic!(moments::AbstractArray{Tt, 4}, traces::Abs
     end
 end
 
-function centered_sum_cpu!(moments::AbstractArray{Tt, 3}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
-    order = size(moments, 2)
-    samples_per_thread = cld(size(traces, 2), Threads.nthreads())
-    trace_tiles = tiled_view(traces, (size(traces, 1), samples_per_thread))
-    moment_tiles = tiled_view(moments, (size(moments)[1:2]..., samples_per_thread))
-
-    @inbounds Threads.@threads for tile_idx in axes(trace_tiles, 2)
-        trace_tile = trace_tiles[1, tile_idx]
-        moment_tile = moment_tiles[1, 1, 1, tile_idx]
-        for i in axes(trace_tile, 1)
-            l_i = convert(Int32, labels[i]+1)
-            t_update = trace_tile[i, :] .- moment_tile[l_i, 1, :]
-            pow = copy(t_update)
-
-            for d in 2:order
-                pow .*= t_update
-                moment_tile[l_i, d, :] .+= pow
+# simple, sequential centered sum update op for cpu
+@inline function centered_sum!(moments::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+    order = size(moments, 3)
+    
+    for i in axes(traces, 1)
+        for l in axes(labels, 2)
+            l_i = convert(Int, labels[i, l])+1
+            for j in axes(traces, 2)
+                t_update = traces[i, j] - moments[l, l_i, 1, j]
+                pow = t_update
+                for d in 2:order
+                    pow *= t_update
+                    moments[l, l_i, d, j] += pow
+                end
             end
         end
     end
@@ -421,11 +407,40 @@ function centered_sum_update!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD},
     centered_sum_update_pass_2!(acc, traces, labels)
 end
 
+# This scratch storage uses up a ton of memory, runtime is a lot slower than AK implementations.
 function centered_sum_update(traces::Matrix{Tt}, labels::Matrix{Tl}, nl::Int, order::Int)::Array{Tt, 4} where {Tt<:AbstractFloat, Tl<:Integer}
-    m = UniVarMomentsAccVecLabel{Tt, Tl, Array, size(labels, 2)}(order, size(traces, 2), nl)
-    centered_sum_update_pass_1!(m, traces, labels)
-    centered_sum_update_pass_2!(m, traces, labels)
-    return m.moments
+    tile_size = (max(4096, cld(size(traces, 1), cld(Threads.nthreads(), sizeof(Tt)))), cld(1024, sizeof(Tt)))
+    trace_tiles = Utils.tiled_view(traces, tile_size)
+    label_tiles = Utils.tiled_view(labels, (tile_size[1], size(labels, 2)))
+
+    # pre-allocate buffers
+    sums = Array{Tt, 3}(undef, size(labels, 2), nl, size(traces, 2))
+    totals = Matrix{Int}(undef, size(labels, 2), nl)
+    moments = fill!(Array{Tt, 4}(undef, size(labels, 2), nl, order, size(traces, 2)), 0)
+    sums_scratch = [fill!(similar(trace_tiles[x, y], size(labels, 2), nl, size(trace_tiles[x, y], 2)), 0) for x in axes(trace_tiles, 1), y in axes(trace_tiles, 2)]
+    totals_scratch = [fill!(Matrix{Int}(undef, size(labels, 2), nl), 0) for _ in axes(trace_tiles, 1), _ in axes(trace_tiles, 2)]
+
+    @sync for itile in axes(trace_tiles, 1)
+        for jtile in axes(trace_tiles, 2)
+            Threads.@spawn @views label_wise_sum!(trace_tiles[itile, jtile], label_tiles[itile, 1], sums_scratch[itile, jtile], totals_scratch[itile, jtile])
+        end
+    end
+    sums .= cat(sum(sums_scratch, dims=(1))..., dims=(3))
+    totals .= sum(@view(totals_scratch[:, 1]))
+
+    # calculate means
+    @views moments[:, :, 1, :] .= sums ./ totals
+    moments_scratch = [moments[:, :, :, ((y-1)*tile_size[2])+1:(min(y*tile_size[2], size(moments, 4)))] for x in axes(trace_tiles, 1), y in axes(trace_tiles, 2)]
+    
+    @sync for itile in axes(trace_tiles, 1)
+        for jtile in axes(trace_tiles, 2)
+            Threads.@spawn @views centered_sum!(moments_scratch[itile, jtile], trace_tiles[itile, jtile], label_tiles[itile, 1])
+        end
+    end
+
+    @views moments[:, :, 2:end, :] .= cat(sum(map(m -> m[:, :, 2:end, :], moments_scratch), dims=(1))..., dims=(4))
+
+    return moments
 end
 
 # Precision (even with Float64) seems to degrade from performing the same 
@@ -493,55 +508,6 @@ end
 
 function merge_from!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, acc_new::UniVarMomentsAcc{Tt, Tl, Tarray}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     merge_from!(acc, acc_new.moments, acc_new.totals)
-end
-
-# Merge a single label estimation
-function merge_from_kern!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UInt32, 0}, M_new::AbstractArray{Tt, 2}, total_new::AbstractArray{UInt32, 0}) where { Tt<:AbstractFloat }
-    checkbounds(M_new, size(M_old)...)
-    checkbounds(total_new, size(total_old)...)
-
-    if total_new[1] == 0
-        # println("empty update")
-        return nothing
-    end
-    if total_old[1] == 0
-        # println("fresh update")
-        M_old .= M_new
-        total_old[1] = total_new[1]
-        return nothing
-    end
-
-    order = size(M_old, 1)
-    δ = M_new[1, :] .- M_old[1, :]
-    δ_pows = zeros(Tt, order + 1, size(M_old, 2))
-    total_result = total_old .+ total_new
-    (tmp1, tmp2, tmp3) = (zeros(Tt, size(M_old, 2)) for _ in 1:3)
-    @inbounds begin
-        for j in axes(δ_pows, 1)
-            δ_pows[j, :] .= δ.^j
-        end
-
-        for p in order:-1:2
-            (as_input1, to_update1) = view(M_old, 1:p-1, :), view(M_old, p, :)
-            (as_input2, to_update2) = view(M_new, 1:p-1, :), view(M_new, p, :)
-
-            to_update1 .+= to_update2
-
-            for k in 1:p-2
-                cst = binomial(k, p)
-                tmp1 .= as_input1[p-k, :] .* ((-total_new[1]/total_result[1])^k)
-                tmp2 .= as_input2[p-k, :] .* ((total_old[1]/total_result[1])^k)
-                tmp3 .= tmp1 .+ tmp2
-                to_update1 .+= (δ_pows[k, :] .* cst) .* tmp3
-            end
-            tmp1[1] = (1/(total_new[1]^(p-1))) - ((-1/total_old[1])^(p-1))
-            tmp1[1] *= ((total_old[1] * total_new[1])/total_result[1])^p
-
-            to_update1 .+= δ_pows[p, :] .* tmp1[1]
-        end
-        view(M_old, 1, :) .+= (δ .* (total_new[1]/total_result[1]))  # update mean seperately
-        total_old[1] = total_result[1]
-    end
 end
 
 # TODO: This seems to be consistently innaccurate, not due to floating point precision issues. I should
