@@ -13,6 +13,7 @@ using Random
 using KernelAbstractions, Atomix
 import AcceleratedKernels as AK
 using Base: convert
+using SIMD
 
 # TODO: I'm not convinced this actually needs to be parameterized on the array type, and it
 # does complicate things slightly.
@@ -361,7 +362,7 @@ function centered_sum_update!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD},
 end
 
 # This scratch storage uses up a ton of memory, runtime is a lot slower than AK implementations.
-function centered_sum_update(traces::Matrix{Tt}, labels::Matrix{Tl}, nl::Int, order::Int)::Array{Tt, 4} where {Tt<:AbstractFloat, Tl<:Integer}
+function centered_sum_update(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}, nl::Int, order::Int)::AbstractArray{Tt, 4} where {Tt<:AbstractFloat, Tl<:Integer}
     tile_size = (max(4096, cld(size(traces, 1), cld(Threads.nthreads(), sizeof(Tt)))), cld(1024, sizeof(Tt)))
     trace_tiles = Utils.tiled_view(traces, tile_size)
     label_tiles = Utils.tiled_view(labels, (tile_size[1], size(labels, 2)))
