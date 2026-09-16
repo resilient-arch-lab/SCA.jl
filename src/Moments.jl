@@ -99,11 +99,35 @@ function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::Abstr
     return sums, totals
 end
 
+# works, but slightly slower than non-vectorized version
+function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}, ::Val{VN}) where {Tt<:AbstractFloat, Tl<:Integer, VN}
+    @assert size(traces, 1) % VN == 0 "traces must be evenely divisible by SIMD size VN on dim 1"
+    i_iter = 1:VN:size(traces, 1)
+
+    tracesvec = vec(traces)
+    labelsvec = vec(labels)
+    sumsvec = vec(sums)
+    totalsvec = vec(totals)
+
+    @inbounds AK.foraxes(traces, 2, min_elems=32) do j
+        for i in i_iter
+            t_i::Vec{VN, Tt} = vload(Vec{VN, Tt}, tracesvec, LinearIndices(traces)[i, j])
+            for l in axes(labels, 2)
+                l_i::Vec{VN, Int} = Vec{VN, Int}(vload(Vec{VN, Tl}, labelsvec, LinearIndices(labels)[i, l])) + 1
+                if j == 1
+                    totalsvec[LinearIndices(totals)[l, 1] + ((l_i-1) * size(totals, 1))] += 1
+                end
+                sumsvec[LinearIndices(sums)[l, 1, j] + ((l_i - 1) * size(sums, 1))] += t_i
+            end
+        end
+    end
+end
+
 function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     @inbounds AK.foraxes(traces, 2) do j
         for i in axes(traces, 1)
             for l in axes(labels, 2)
-                l_i = convert(Int32, labels[i, l]+1)
+                l_i = convert(Int, labels[i, l]) + 1
                 if j == 1
                     totals[l, l_i] += 1
                 end
