@@ -13,7 +13,10 @@ using .Moments
 using Statistics
 using Atomix
 
-mutable struct SNRBasic{Tt<:AbstractFloat, Tl<:Integer}
+abstract type AbstractSNR end
+abstract type AbstractMoMSNR <: AbstractSNR end
+
+mutable struct SNRBasic{Tt<:AbstractFloat, Tl<:Integer} <: AbstractSNR
     sums::AbstractMatrix{Tt}
     sums_sq::AbstractMatrix{Tt}
     totals::AbstractVector{Int}
@@ -28,7 +31,7 @@ mutable struct SNRBasic{Tt<:AbstractFloat, Tl<:Integer}
     end
 end
 
-mutable struct SNRMoments{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+mutable struct SNRMoments{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray} <: AbstractMoMSNR
     moments::UniVarMomentsAcc{Tt, Tl, Tarray}
     nl::Int
     ns::Int
@@ -39,20 +42,7 @@ mutable struct SNRMoments{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     end
 end
 
-mutable struct SNRMomentsChunked{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    chunksize::NTuple{2, Int}  # chunks might not be of exactly `chunksize` dim
-    chunk_map::Dict{UnitRange, SNRMoments{Tt, Tl, Tarray}}
-    nl::Int
-    ns::Int
-
-    function SNRMomentsChunked{Tt, Tl, Tarray}(ns::Int, nl::Int, chunksize::NTuple{2, Int} = (10000, 1000)) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-        slices = tiled_view(1:ns, (chunksize[2], ))
-        chunk_map = Dict(slice => SNRMoments{Tt, Tl, Tarray}(size(slice, 1), nl) for slice in slices)
-        new{Tt, Tl, Tarray}(chunksize, chunk_map, nl, ns)
-    end
-end
-
-mutable struct SNROrdered{Tt<:AbstractFloat, Tl<:Integer}
+mutable struct SNROrdered{Tt<:AbstractFloat, Tl<:Integer} <: AbstractMoMSNR
     moments::UniVarMomentsAcc{Tt, Tl, Array}
     order::Int
 
@@ -62,7 +52,7 @@ mutable struct SNROrdered{Tt<:AbstractFloat, Tl<:Integer}
     end
 end
 
-struct SNRVecLabel{Tt<:AbstractFloat, Tl<:Integer, LD}
+struct SNRVecLabel{Tt<:AbstractFloat, Tl<:Integer, LD} <: AbstractMoMSNR
     moments::UniVarMomentsAccVecLabel{Tt, Tl, Array, LD}
     
     function SNRVecLabel{Tt, Tl, LD}(ns::Int, nl::Int) where {Tt<:AbstractFloat, Tl<:Integer, LD}
@@ -93,26 +83,8 @@ function SNR_fit!(snr::SNRBasic{Tt, Tl}, traces, labels) where {Tt<:Real, Tl<:Re
     end
 end
 
-function SNR_fit!(snr::Union{SNRMoments{Tt, Tl}, SNROrdered{Tt, Tl}, SNRVecLabel{Tt, Tl, LD}}, traces, labels) where {Tt<:Real, Tl<:Real, LD}
+function SNR_fit!(snr::AbstractMoMSNR, traces, labels) where {Tt<:Real, Tl<:Real, LD}
     centered_sum_update!(snr.moments, traces, labels)
-end
-
-function SNR_fit!(snr::SNRMomentsChunked{Tt, Tl}, traces, labels) where {Tt<:Real, Tl<:Real}
-    Threads.@threads for tile in collect(keys(snr.chunk_map))
-        for batch in tiled_view(1:size(traces, 1), (snr.chunksize[1], ))
-            SNR_fit!(snr.chunk_map[tile], view(traces, batch, tile), view(labels, batch))
-        end
-    end
-end
-
-function SNR_fit!(snr::SNRMomentsChunked{Tt, Tl}, idx::UnitRange, traces, labels) where {Tt<:Real, Tl<:Real}
-    if !haskey(snr.chunk_map, idx)
-        throw(BoundsError)
-    end
-
-    for batch in tiled_view(1:size(traces, 1), (snr.chunksize[1], ))
-        SNR_fit!(snr.chunk_map[idx], traces[batch, :], labels[batch])
-    end
 end
 
 function SNR_finalize(snr::SNRBasic{Tt, Tl})::Vector where {Tt<:Real, Tl<:Real}
@@ -130,14 +102,6 @@ function SNR_finalize(snr::SNRMoments{Tt, Tl})::Vector where {Tt<:Real, Tl<:Inte
     signals = var(μ, dims=1)
     noises = mean(σ2, dims=1)
     vec(signals ./ noises)
-end
-
-function SNR_finalize(snr::SNRMomentsChunked{Tt, Tl})::Vector where {Tt<:Real, Tl<:Integer}
-    out = zeros(snr.ns)
-    for slice in collect(keys(snr.chunk_map))
-        out[slice] .= SNR_finalize(snr.chunk_map[slice])
-    end
-    out
 end
 
 function SNR_finalize(snr::SNROrdered)::Vector 
