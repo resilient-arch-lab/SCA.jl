@@ -22,9 +22,11 @@ using Random
 using KernelAbstractions, Atomix
 import AcceleratedKernels as AK
 using Base: convert
+using StaticArrays
 
 abstract type AbstractMomentsAcc end
 abstract type AbstractUnivariateMomentsAcc <: AbstractMomentsAcc end
+abstract type AbstractMultivariateMomentsAcc <: AbstractMomentsAcc end
 
 struct UniVarMomentsAccIncremental{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray} <: AbstractUnivariateMomentsAcc
     totals::Tarray
@@ -62,6 +64,37 @@ function UniVarMomentsAccIncremental{Tt, Tl, Tarray}(order, a::Tarray, labels::T
     _ctrd_sums = fill!(similar(ctrd_sums), 0)
     _sums = fill!(Tarray{Tt, 3}(undef, ldim, lrange, ns), 0)
     UniVarMomentsAccIncremental{Tt, Tl, Tarray}(totals, ctrd_sums, order, ns, lrange, ldim, _totals, _ctrd_sums, _sums)
+end
+
+struct MultiVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray} <: AbstractMultivariateMomentsAcc
+    totals::Tarray
+    SCPs::Tarray  # sums of centered products
+    α::Matrix{Int}  # order vectors (vector rows)
+    ns::UInt  # number of samples per trace (and therefore the variateness of sums of centered prods)
+    lrange::UInt
+    ldim::UInt
+    _totals::Tarray
+    _SCPs::Tarray
+    _sums::Tarray
+end
+
+function MultiVarMomentsAcc{Tt, Tl, Tarray}(order::Union{Int, AbstractVector{Int}, AbstractMatrix{Int}}, ns::Integer, lrange::Integer, ldim::Integer) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+    if typeof(order) == Int
+        α = fill!(Tarray{Int, 2}(undef, 1, ns), order)  # the same order is calculated for each sample position 
+    elseif typeof(order) <: AbstractVector{Int}
+        α = reshape(order, 1, ns)
+    else typeof(order) <: AbstractMatrix{Int}
+        checkbounds(order, 1, ns)
+        α = order
+    end
+    
+    totals = fill!(Tarray{UInt32, 2}(undef, ldim, lrange), 0)
+    SCPs = fill!(Tarray{Tt, 4}(undef, ldim, lrange, size(α, 1), 1), 0)
+
+    _totals = similar(totals)
+    _SCPs = similar(SCPs)
+    _sums = Tarray{Tt, 3}(undef, ldim, lrange, ns)
+    MultiVarMomentsAcc{Tt, Tl, Tarray}(totals, SCPs, α, ns, lrange, ldim, _totals, _SCPs, _sums)
 end
 
 function label_wise_sum_ak_transposed!(traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
@@ -325,6 +358,46 @@ function get_mean_and_var(m::UniVarMomentsAccIncremental, d::Int)
         @inbounds σ2 = ((m.ctrd_sums[:, :, 2*d, :] ./ m.totals) .- ((m.ctrd_sums[:, :, d, :] ./ m.totals).^2)) ./ ((m.ctrd_sums[:, :, 2, :] ./ m.totals).^d)
         return μ, σ2
     end
+end
+
+
+# MULTIVARIATE STUFF
+
+function centered_sum_kern_ak!(SCPs::AbstractArray{Tt, 4}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, order::AbstractMatrix{Int}, means::AbstractArray{Tt, 3}) where {Tt<:AbstractFloat, Tl<:Integer}
+    @boundscheck begin
+        # TODO
+    end
+
+    itr_view = @view SCPs[:, 1, :, 1]
+
+    # parallelize over orders (for now)
+    AK.foreachindex(itr_view) do idx
+        (l, o) = CartesianIndices(itr_view)[idx].I
+        for i in axes(traces, 1)
+            l_i = convert(Int32, labels[i, l]+1)
+            ctrd_prod = 1
+            for j in axes(traces, 2)
+                ctrd_prod *= (traces[i, j] - means[l, l_i, j]) ^ order[o, j]
+            end
+            SCPs[l, l_i, o, 1] += ctrd_prod
+        end
+    end
+end
+
+function centered_sum_update!(acc::MultiVarMomentsAcc{Tt, Tl, Ta}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+    fill!(acc._sums, 0)
+    fill!(acc._totals, 0)
+    fill!(acc._SCPs, 0)
+    
+    # Pass 1, calculate labels wise sums
+    label_wise_sum_ak!(traces, labels, acc._sums, acc._totals)
+
+    # Pass 2: find means and calculate sums of centered prods
+    means = acc._sums ./ acc._totals
+    centered_sum_kern_ak!(acc._SCPs, traces, labels, acc.α, means)
+
+    acc.SCPs .= acc._SCPs
+    acc.totals .= acc._totals
 end
 
 end  # module Moments
