@@ -257,26 +257,6 @@ end
     display(vec(mean(prcnt_err, dims=(1, 3))))
 end
 
-# @testset "Moment merging kernel comparison to legacy reference function" begin
-#     a = rand(20000, 5)
-#     l = rand(UInt8, 20000)
-#     m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 5, 256)
-#     m2 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 5, 256)
-
-#     Moments.centered_sum_update_old!(m1, a[1:10000, :], l[1:10000])
-#     Moments.centered_sum_update_old!(m1, a[10001:end, :], l[10001:end])
-#     Moments.centered_sum_update!(m2, a[1:10000, :], l[1:10000])
-#     Moments.centered_sum_update!(m2, a[10001:end, :], l[10001:end])
-
-#     @test all(isapprox.(m1.ctrd_sums, m2.ctrd_sums; rtol=1e-2))
-#     correct = all(isapprox.(m1.ctrd_sums, m2.ctrd_sums; rtol=1e-2))
-#     println("Correct: $correct")
-
-#     prcnt_err = abs.((m2.ctrd_sums .- m1.ctrd_sums) ./ m1.ctrd_sums).*100
-#     println("Moment merging algorithm test case percent error per order $(1:m1.order)")
-#     display(vec(mean(prcnt_err, dims=(1, 3))))
-# end
-
 @testset "Test that Chunked TTest is equivalent on dimension 2" begin
     t = rand(Float64, 5000, 1000)
     l = UInt8.(rand([0, 1], 5000))
