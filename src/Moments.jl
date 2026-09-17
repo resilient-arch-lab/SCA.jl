@@ -19,41 +19,41 @@ using Base: convert
 # TODO: This should be able to handle mutli-dimensional labels (e.g. vector labels)
 struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     totals::Tarray
-    moments::Tarray
+    ctrd_sums::Tarray
     order::UInt
     ns::UInt
     nl::UInt
     _totals::Tarray
-    _moments::Tarray
-    _sums::Tarray
+    _ctrd_sums::Tarray
+    _raw_sums::Tarray
 
     function UniVarMomentsAcc{Tt, Tl, Tarray}(order, ns, nl) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
         totals = fill!(Tarray{UInt32, 1}(undef, nl), 0)
-        moments = fill!(Tarray{Tt, 3}(undef, nl, order, ns), 0)
+        ctrd_sums = fill!(Tarray{Tt, 3}(undef, nl, order, ns), 0)
         _totals = similar(totals)
-        _moments = similar(moments)
+        _ctrd_sums = similar(ctrd_sums)
         _sums = Tarray{Tt, 2}(undef, nl, ns)
-        new(totals, moments, order, ns, nl, _totals, _moments, _sums)
+        new(totals, ctrd_sums, order, ns, nl, _totals, _ctrd_sums, _sums)
     end
 end
 
 struct UniVarMomentsAccVecLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
     totals::Tarray
-    moments::Tarray
+    ctrd_sums::Tarray
     order::UInt
     ns::UInt
     nl::UInt
     _totals::Tarray
-    _moments::Tarray
+    _ctrd_sums::Tarray
     _sums::Tarray
 
     function UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}(order, ns, nl) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD} 
         totals = fill!(Tarray{UInt32, 2}(undef, LD, nl), 0)
-        moments = fill!(Tarray{Tt, 4}(undef, LD, nl, order, ns), 0)
+        ctrd_sums = fill!(Tarray{Tt, 4}(undef, LD, nl, order, ns), 0)
         _totals = fill!(similar(totals), 0)
-        _moments = fill!(similar(moments), 0)
+        _ctrd_sums = fill!(similar(ctrd_sums), 0)
         _sums = fill!(Tarray{Tt, 3}(undef, LD, nl, ns), 0)
-        new{Tt, Tl, Tarray, LD}(totals, moments, order, ns, nl, _totals, _moments, _sums)
+        new{Tt, Tl, Tarray, LD}(totals, ctrd_sums, order, ns, nl, _totals, _ctrd_sums, _sums)
     end
 end
 
@@ -210,18 +210,18 @@ function centered_sum_kern_ak_atomic!(moments::AbstractArray{Tt, 4}, traces::Abs
 end
 
 # simple, sequential centered sum update op for cpu
-@inline function centered_sum!(moments::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
-    order = size(moments, 3)
+@inline function centered_sum!(ctrd_sums::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+    order = size(ctrd_sums, 3)
     
     for i in axes(traces, 1)
         for l in axes(labels, 2)
             l_i = convert(Int, labels[i, l])+1
             for j in axes(traces, 2)
-                t_update = traces[i, j] - moments[l, l_i, 1, j]
+                t_update = traces[i, j] - ctrd_sums[l, l_i, 1, j]
                 pow = t_update
                 for d in 2:order
                     pow *= t_update
-                    moments[l, l_i, d, j] += pow
+                    ctrd_sums[l, l_i, d, j] += pow
                 end
             end
         end
@@ -235,7 +235,7 @@ end
 function centered_sum_update_old!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     # Initialize intermediate values
     sums = fill!(similar(traces, Tt, acc.nl, acc.ns), 0)
-    moments = fill!(similar(traces, Tt, size(acc.moments)), 0)
+    moments = fill!(similar(traces, Tt, size(acc.ctrd_sums)), 0)
     totals = fill!(similar(traces, UInt32, size(acc.totals)), 0)
 
     label_wise_sum_ak!(traces, labels, sums, totals)
@@ -255,41 +255,41 @@ end
 #   Works with CUDA, weird...
 #   - It happens during merging, on init
 function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    fill!(acc._sums, 0)
-    fill!(acc._moments, 0)
+    fill!(acc._raw_sums, 0)
+    fill!(acc._ctrd_sums, 0)
     fill!(acc._totals, 0)
 
-    if get_backend(traces) != get_backend(acc._sums)
+    if get_backend(traces) != get_backend(acc._raw_sums)
         traces = Tarray(traces)
     end
-    if get_backend(labels) != get_backend(acc._sums)
+    if get_backend(labels) != get_backend(acc._raw_sums)
         labels = Tarray(labels)
     end
 
     @boundscheck begin
-        checkbounds(acc._sums, acc.nl, size(traces, 2))
-        checkbounds(acc._moments, acc.nl, acc.order, size(traces, 2))
+        checkbounds(acc._raw_sums, acc.nl, size(traces, 2))
+        checkbounds(acc._ctrd_sums, acc.nl, acc.order, size(traces, 2))
         checkbounds(labels, size(traces, 1))
     end
 
-    label_wise_sum_ak_transposed!(traces, labels, acc._sums, acc._totals)
+    label_wise_sum_ak_transposed!(traces, labels, acc._raw_sums, acc._totals)
 
     # find means
-    @. acc._moments[:, 1, :] = acc._sums / acc._totals
+    @. acc._ctrd_sums[:, 1, :] = acc._raw_sums / acc._totals
 
     # compute centered sums
-    centered_sum_kern_ak_transposed!(acc._moments, traces, labels)  # about 30% of centered_sum_update! runtime
+    centered_sum_kern_ak_transposed!(acc._ctrd_sums, traces, labels)  # about 30% of centered_sum_update! runtime
 
     # merge centered sum estimations
     init_ls = acc.totals .== 0
     update_ls = acc.totals .!= 0
     if any(init_ls)
-        @inbounds acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
+        @inbounds acc.ctrd_sums[init_ls, :, :] .= acc._ctrd_sums[init_ls, :, :]
         @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
     end
     if any(update_ls)
         Threads.@threads for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
-            @inbounds merge_from_ak!(view(acc.moments, l, :, :), view(acc.totals, l), view(acc._moments, l, :, :), view(acc._totals, l))
+            @inbounds merge_from_ak!(view(acc.ctrd_sums, l, :, :), view(acc.totals, l), view(acc._ctrd_sums, l, :, :), view(acc._totals, l))
             # roughly 40% of centered_sum_update! runtime (was 60 before I removed the δ_pows allocation)
             # Also, this is runtime dispatched and garbage collected?
         end
@@ -302,11 +302,11 @@ end
 function centered_sum_update_pass_1!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
     @boundscheck begin
         checkbounds(acc._sums, LD, acc.nl, size(traces, 2))
-        checkbounds(acc._moments, LD, acc.nl, acc.order, size(traces, 2))
+        checkbounds(acc._ctrd_sums, LD, acc.nl, acc.order, size(traces, 2))
         checkbounds(labels, size(traces, 1), LD)
     end
     
-    fill!(acc._moments, 0)
+    fill!(acc._ctrd_sums, 0)
     fill!(acc._sums, 0)
     fill!(acc._totals, 0)
 
@@ -325,24 +325,24 @@ end
 function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
     @boundscheck begin
         checkbounds(acc._sums, LD, acc.nl, size(traces, 2))
-        checkbounds(acc._moments, LD, acc.nl, acc.order, size(traces, 2))
+        checkbounds(acc._ctrd_sums, LD, acc.nl, acc.order, size(traces, 2))
         checkbounds(labels, size(traces, 1), LD)
     end
 
-    @. acc._moments[:, :, 1, :] = acc._sums / acc._totals
+    @. acc._ctrd_sums[:, :, 1, :] = acc._sums / acc._totals
 
-    centered_sum_kern_ak!(acc._moments, traces, labels)
+    centered_sum_kern_ak!(acc._ctrd_sums, traces, labels)
 
     # merge centered sum estimations
     init_ls = acc.totals .== 0
     update_ls = acc.totals .!= 0
     if any(init_ls)
-        @inbounds @views acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
+        @inbounds @views acc.ctrd_sums[init_ls, :, :] .= acc._ctrd_sums[init_ls, :, :]
         @inbounds @views acc.totals[init_ls] .= acc._totals[init_ls]
     end
     if any(update_ls)
         for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
-            @inbounds merge_from_ak!(view(acc.moments, l, :, :), view(acc.totals, l), view(acc._moments, l, :, :), view(acc._totals, l))
+            @inbounds merge_from_ak!(view(acc.ctrd_sums, l, :, :), view(acc.totals, l), view(acc._ctrd_sums, l, :, :), view(acc._totals, l))
         end
         @inbounds @views acc.totals[update_ls] .+= acc._totals[update_ls]
     end
@@ -350,8 +350,8 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarra
     return
 end
 
-function centered_sum_update_pass_2!(moments::AbstractArray{Tt}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
-    centered_sum_kern_ak!(moments, traces, labels)
+function centered_sum_update_pass_2!(ctrd_sums::AbstractArray{Tt}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+    centered_sum_kern_ak!(ctrd_sums, traces, labels)
     return
 end
 
@@ -399,34 +399,32 @@ end
 # Precision (even with Float64) seems to degrade from performing the same 
 # computation in a single centered_sum_update! for the same data. Use of 
 # this should be minimized, prefer larger update batches whenever possible
-function merge_from_old!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, M_new::Array{Tt, 3}, totals_new::Array{UInt32, 1}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+function merge_from_old!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, CS_new::Array{Tt, 3}, totals_new::Array{UInt32, 1}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     if all(totals_new .== 0)
         return nothing
     end
     if all(acc.totals .== 0)
         # If this is the first estimation, the acc values can be updated directly
-        acc.moments .= M_new
+        acc.ctrd_sums .= CS_new
         acc.totals .= totals_new
         return nothing
     end
 
-    δ = view(M_new, :, 1, :) - view(acc.moments, :, 1, :)
+    δ = view(CS_new, :, 1, :) - view(acc.ctrd_sums, :, 1, :)
     δ_pows = fill!(Tarray{Tt, 2}(undef, acc.order+1, acc.ns), 0)
-    M_old, totals_old = view(acc.moments, :, :, :), view(acc.totals, :)
+    CS_old, totals_old = view(acc.ctrd_sums, :, :, :), view(acc.totals, :)
     totals_result = totals_old .+ totals_new
     kern_order = Int(acc.order)
 
-    # I'm pretty sure this can't be threaded like this, because the loop modifies δ_pows
-    # Threads.@threads for l_idx in axes(totals_old, 2)
     for l_idx in axes(totals_old, 1)
-        M_old_i = view(M_old, l_idx, :, :)
-        M_new_i = view(M_new, l_idx, :, :)
+        CS_old_i = view(CS_old, l_idx, :, :)
+        CS_new_i = view(CS_new, l_idx, :, :)
 
         if totals_new[l_idx] == 0
             continue
         end
         if totals_old[l_idx] == 0
-            M_old_i .= M_new_i
+            CS_old_i .= CS_new_i
             totals_old[l_idx] = totals_new[l_idx]
             continue
         end
@@ -435,8 +433,8 @@ function merge_from_old!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, M_new::Array{Tt,
             view(δ_pows, j, :) .= view(δ, l_idx, :).^j
         end
         for p in kern_order:-1:2
-            (as_input1, to_update1) = view(M_old_i, 1:p-1, :), view(M_old_i, p, :)
-            (as_input2, to_update2) = view(M_new_i, 1:p-1, :), view(M_new_i, p, :)
+            (as_input1, to_update1) = view(CS_old_i, 1:p-1, :), view(CS_old_i, p, :)
+            (as_input2, to_update2) = view(CS_new_i, 1:p-1, :), view(CS_new_i, p, :)
 
             to_update1 .+= to_update2
 
@@ -453,32 +451,32 @@ function merge_from_old!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, M_new::Array{Tt,
 
             to_update1 .+= δ_pows[p, :] .* tmp
         end
-        view(M_old_i, 1, :) .+= (view(δ, l_idx, :) .* (totals_new[l_idx]/totals_result[l_idx]))  # update mean seperately
+        view(CS_old_i, 1, :) .+= (view(δ, l_idx, :) .* (totals_new[l_idx]/totals_result[l_idx]))  # update mean seperately
     end
     totals_old .= totals_result
     return nothing
 end
 
 function merge_from!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, acc_new::UniVarMomentsAcc{Tt, Tl, Tarray}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    merge_from!(acc, acc_new.moments, acc_new.totals)
+    merge_from!(acc, acc_new.ctrd_sums, acc_new.totals)
 end
 
 # TODO: This seems to be consistently innaccurate, not due to floating point precision issues. I should
 # figure out why that is.
-function merge_from_ak!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UInt32, 0}, M_new::AbstractArray{Tt, 2}, total_new::AbstractArray{UInt32, 0}) where { Tt<:AbstractFloat }
+function merge_from_ak!(CS_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UInt32, 0}, CS_new::AbstractArray{Tt, 2}, total_new::AbstractArray{UInt32, 0}) where { Tt<:AbstractFloat }
     @boundscheck begin
-        checkbounds(M_new, size(M_old)...)
+        checkbounds(CS_new, size(CS_old)...)
         checkbounds(total_new, size(total_old)...)
     end
     
-    order = size(M_old, 1)
+    order = size(CS_old, 1)
 
-    @inbounds AK.foraxes(M_old, 2) do j  # most allocations here 
-        δ = M_new[1, j] - M_old[1, j]
+    @inbounds AK.foraxes(CS_old, 2) do j  # most allocations here 
+        δ = CS_new[1, j] - CS_old[1, j]
         total_result = total_old[1] + total_new[1]
 
         for p in order:-1:2
-            M_old[p, j] += M_new[p, j]
+            CS_old[p, j] += CS_new[p, j]
 
             # This loop seems to be where the error is coming from. orders 1 and 2 are accurate but 3 is where extreme error starts happening
             # Error also seems to be worst at orders 3, 5, 7, ...
@@ -488,55 +486,63 @@ function merge_from_ak!(M_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UI
             # for k in p-2:-1:1
             for k in 1:p-2
                 k_choose_p = binomial(Int32(p), Int32(k))  # explicit Int32 cast avoids unnecessary use of arbitrary precision arithmetic 
-                tmp1 = M_old[p-k, j] * ((-total_new[1]/total_result[1])^k)
-                tmp2 = M_new[p-k, j] * ((total_old[1]/total_result[1])^k)
+                tmp1 = CS_old[p-k, j] * ((-total_new[1]/total_result[1])^k)
+                tmp2 = CS_new[p-k, j] * ((total_old[1]/total_result[1])^k)
                 tmp3 = tmp1 + tmp2
                 M_tmp += ((δ^k) * k_choose_p) * tmp3
             end
-            M_old[p, j] += M_tmp
+            CS_old[p, j] += M_tmp
 
             # with batches of size 10000, this section is stable with float64 up to at least order 16 within 5 decimal places
-            # tmp = (1/(total_new[1]^(p-1))) - ((-1/total_old[1])^(p-1))  # this is how its shown in the paper
             tmp = ((1/total_new[1])^(p-1)) - ((-1/total_old[1])^(p-1))  # this is not how its shown in the paper, but is how scalib implements it.
             # ^ This improves numerical stability at orders > 4 by avoiding division of 1 by total_new[1]^(p-1), which is quite large at p>4
             tmp *= (((total_old[1] * total_new[1])/total_result[1]) * δ)^p
-            M_old[p, j] += tmp
+            CS_old[p, j] += tmp
         end
 
-        M_old[1, j] += (δ * (total_new[1]/total_result[1]))  # update mean seperately
+        CS_old[1, j] += (δ * (total_new[1]/total_result[1]))  # update mean seperately
     end
     
     return nothing
 end
 
+function centered_moment(m::UniVarMomentsAcc, d::Int)
+    if d == 1
+        @views CM_d = m.ctrd_sums[:, 1, :]
+    else 
+        @views CM_d = m.ctrd_sums[:, d, :] ./ m.totals
+    end
+    return CM_d
+end
+
 function get_mean_and_var(m::UniVarMomentsAcc, d::Int)
     if d == 1
-        @inbounds μ = @view m.moments[:, 1, :]
-        @inbounds σ2 = m.moments[:, 2, :] ./ m.totals
+        @inbounds μ = @view m.ctrd_sums[:, 1, :]
+        @inbounds σ2 = m.ctrd_sums[:, 2, :] ./ m.totals
         return μ, σ2
     elseif d == 2
-        @inbounds μ = m.moments[:, 2, :] ./ m.totals
-        @inbounds σ2 = m.moments[:, 4, :] ./ m.totals
+        @inbounds μ = m.ctrd_sums[:, 2, :] ./ m.totals
+        @inbounds σ2 = m.ctrd_sums[:, 4, :] ./ m.totals
         return μ, σ2
     elseif d > 2
-        @inbounds μ = (m.moments[:, d, :] ./ m.totals) ./ ((m.moments[:, 2, :] ./ m.totals).^(d/2))
-        @inbounds σ2 = ((m.moments[:, 2*d, :] ./ m.totals) .- ((m.moments[:, d, :] ./ m.totals).^2)) ./ ((m.moments[:, 2, :] ./ m.totals).^d)
+        @inbounds μ = (m.ctrd_sums[:, d, :] ./ m.totals) ./ ((m.ctrd_sums[:, 2, :] ./ m.totals).^(d/2))
+        @inbounds σ2 = ((m.ctrd_sums[:, 2*d, :] ./ m.totals) .- ((m.ctrd_sums[:, d, :] ./ m.totals).^2)) ./ ((m.ctrd_sums[:, 2, :] ./ m.totals).^d)
         return μ, σ2
     end
 end
 
 function get_mean_and_var(m::UniVarMomentsAccVecLabel, d::Int)
     if d == 1
-        @inbounds μ = @view m.moments[:, :, 1, :]
-        @inbounds σ2 = m.moments[:, :, 2, :] ./ m.totals
+        @inbounds μ = @view m.ctrd_sums[:, :, 1, :]
+        @inbounds σ2 = m.ctrd_sums[:, :, 2, :] ./ m.totals
         return μ, σ2
     elseif d == 2
-        @inbounds μ = m.moments[:, :, 2, :] ./ m.totals
-        @inbounds σ2 = m.moments[:, :, 4, :] ./ m.totals
+        @inbounds μ = m.ctrd_sums[:, :, 2, :] ./ m.totals
+        @inbounds σ2 = m.ctrd_sums[:, :, 4, :] ./ m.totals
         return μ, σ2
     elseif d > 2
-        @inbounds μ = (m.moments[:, :, d, :] ./ m.totals) ./ ((m.moments[:, :, 2, :] ./ m.totals).^(d/2))
-        @inbounds σ2 = ((m.moments[:, :, 2*d, :] ./ m.totals) .- ((m.moments[:, :, d, :] ./ m.totals).^2)) ./ ((m.moments[:, :, 2, :] ./ m.totals).^d)
+        @inbounds μ = (m.ctrd_sums[:, :, d, :] ./ m.totals) ./ ((m.ctrd_sums[:, :, 2, :] ./ m.totals).^(d/2))
+        @inbounds σ2 = ((m.ctrd_sums[:, :, 2*d, :] ./ m.totals) .- ((m.ctrd_sums[:, :, d, :] ./ m.totals).^2)) ./ ((m.ctrd_sums[:, :, 2, :] ./ m.totals).^d)
         return μ, σ2
     end
 end

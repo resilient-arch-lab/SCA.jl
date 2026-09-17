@@ -11,7 +11,7 @@ import SCA.Moments: centered_sum_update_pass_1!, centered_sum_update_pass_2!
 function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractGPUArray{Tt}, labels::AbstractGPUArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractGPUArray}
     # initialize intermediate values (these could be allocated on `acc` construction)
     fill!(acc._sums, 0)
-    fill!(acc._moments, 0)
+    fill!(acc._ctrd_sums, 0)
     fill!(acc._totals, 0)
 
     if get_backend(traces) != get_backend(acc._sums) || get_backend(labels) != get_backend(acc._sums)
@@ -21,30 +21,30 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
 
     @boundscheck begin
         checkbounds(acc._sums, acc.nl, size(traces, 2))
-        checkbounds(acc._moments, acc.nl, acc.order, size(traces, 2))
+        checkbounds(acc._ctrd_sums, acc.nl, acc.order, size(traces, 2))
         checkbounds(labels, size(traces, 1))
     end
 
     label_wise_sum_ak!(traces, labels, acc._sums, acc._totals)
 
     # find means
-    @. acc._moments[:, 1, :] = acc._sums / acc._totals
+    @. acc._ctrd_sums[:, 1, :] = acc._sums / acc._totals
 
     # compute centered sums
-    # centered_sum_kern_ak!(acc._moments, traces, labels)
+    # centered_sum_kern_ak!(acc._ctrd_sums, traces, labels)
     # about 30% of centered_sum_update! runtime
-    centered_sum_kern_ak_transposed!(acc._moments, traces, labels)
+    centered_sum_kern_ak_transposed!(acc._ctrd_sums, traces, labels)
 
     # merge centered sum estimations
     init_ls = acc.totals .== 0
     update_ls = acc.totals .!= 0
     if any(init_ls)
-        @inbounds acc.moments[init_ls, :, :] .= acc._moments[init_ls, :, :]
+        @inbounds acc.ctrd_sums[init_ls, :, :] .= acc._ctrd_sums[init_ls, :, :]
         @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
     end
     if any(update_ls)
         Threads.@threads for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
-            @inbounds merge_from_ak!(view(acc.moments, l, :, :), view(acc.totals, l), view(acc._moments, l, :, :), view(acc._totals, l))
+            @inbounds merge_from_ak!(view(acc.ctrd_sums, l, :, :), view(acc.totals, l), view(acc._ctrd_sums, l, :, :), view(acc._totals, l))
             # roughly 40% of centered_sum_update! runtime (was 60 before I removed the δ_pows allocation)
             # Also, this is runtime dispatched and garbage collected?
         end
@@ -55,7 +55,7 @@ end
 function centered_sum_update_pass_1!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractGPUArray{Tt}, labels::AbstractGPUArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractGPUArray, LD}
     @boundscheck begin
         checkbounds(acc._sums, LD, acc.nl, size(traces, 2))
-        checkbounds(acc._moments, LD, acc.nl, acc.order, size(traces, 2))
+        checkbounds(acc._ctrd_sums, LD, acc.nl, acc.order, size(traces, 2))
         checkbounds(labels, size(traces, 1), LD)
     end
 
@@ -67,15 +67,15 @@ end
 function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractGPUArray{Tt}, labels::AbstractGPUArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractGPUArray, LD}
     @boundscheck begin
         checkbounds(acc._sums, LD, acc.nl, size(traces, 2))
-        checkbounds(acc._moments, LD, acc.nl, acc.order, size(traces, 2))
+        checkbounds(acc._ctrd_sums, LD, acc.nl, acc.order, size(traces, 2))
         checkbounds(labels, size(traces, 1), LD)
     end
 
-    @. acc._moments[:, :, 1, :] = acc._sums / acc._totals
+    @. acc._ctrd_sums[:, :, 1, :] = acc._sums / acc._totals
 
-    centered_sum_kern_ak!(acc._moments, traces, labels)
+    centered_sum_kern_ak!(acc._ctrd_sums, traces, labels)
 
-    acc.moments .= acc._moments
+    acc.ctrd_sums .= acc._ctrd_sums
     acc.totals .= acc._totals
 
     return

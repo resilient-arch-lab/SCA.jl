@@ -23,7 +23,7 @@ function Moments.centered_sum_update(traces::DMatrix{Tt}, labels::DMatrix{Tl}, n
     # allocate intermediate values
     sums = zeros(Blocks(l_parts.blocksize[2], nl, t_parts.blocksize[2]), Tt, size(labels, 2), nl, size(traces, 2))
     totals = zeros(Blocks(l_parts.blocksize[2], nl), UInt32, size(labels, 2), nl)
-    moments = zeros(Blocks(l_parts.blocksize[2], nl, order, t_parts.blocksize[2]), Tt, size(labels, 2), nl, order, size(traces, 2))
+    ctrd_sums = zeros(Blocks(l_parts.blocksize[2], nl, order, t_parts.blocksize[2]), Tt, size(labels, 2), nl, order, size(traces, 2))
 
     Dagger.spawn_datadeps() do 
         # distributed pass 1
@@ -40,7 +40,7 @@ function Moments.centered_sum_update(traces::DMatrix{Tt}, labels::DMatrix{Tl}, n
         # calculate elementwise mean
         for j in axes(traces.chunks, 2)
             for k in axes(labels.chunks, 2)
-                Dagger.@spawn mean_helper(Out(moments.chunks[k, 1, 1, j]), In(sums.chunks[k, 1, j]), In(totals.chunks[k, 1]))
+                Dagger.@spawn mean_helper(Out(ctrd_sums.chunks[k, 1, 1, j]), In(sums.chunks[k, 1, j]), In(totals.chunks[k, 1]))
             end
         end
 
@@ -48,13 +48,13 @@ function Moments.centered_sum_update(traces::DMatrix{Tt}, labels::DMatrix{Tl}, n
         for i in axes(labels.chunks, 1)
             for k in axes(labels.chunks, 2)
                 for j in axes(traces.chunks, 2)
-                    Dagger.@spawn Moments.centered_sum_update_pass_2!(InOut(moments.chunks[k, 1, 1, j]), In(traces.chunks[i, j]), In(labels.chunks[i, k]))
+                    Dagger.@spawn Moments.centered_sum_update_pass_2!(InOut(ctrd_sums.chunks[k, 1, 1, j]), In(traces.chunks[i, j]), In(labels.chunks[i, k]))
                 end
             end
         end
     end
 
-    return moments
+    return ctrd_sums
 end
 
 end

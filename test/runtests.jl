@@ -20,8 +20,8 @@ using Test
         Moments.centered_sum_update_old!(m2, a_tile, l_tile)
     end
 
-    correct = all(isapprox.(m1.moments, m2.moments; rtol=1e-2))
-    prcnt_err = abs.((m2.moments .- m1.moments) ./ m1.moments).*100
+    correct = all(isapprox.(m1.ctrd_sums, m2.ctrd_sums; rtol=1e-2))
+    prcnt_err = abs.((m2.ctrd_sums .- m1.ctrd_sums) ./ m1.ctrd_sums).*100
 
     println("Moment merging algorithm test case percent error per order $(1:m1.order)")
     display(vec(mean(prcnt_err, dims=(1, 3))))
@@ -51,14 +51,14 @@ end
         
         # store results
         if isempty(results32)
-            results32 = m32.moments
+            results32 = m32.ctrd_sums
         else
-            results32 = cat(results32, m32.moments, dims=5)
+            results32 = cat(results32, m32.ctrd_sums, dims=5)
         end
         if isempty(results64)
-            results64 = m64.moments
+            results64 = m64.ctrd_sums
         else
-            results64 = cat(results64, m64.moments, dims=5)
+            results64 = cat(results64, m64.ctrd_sums, dims=5)
         end
 
         # shuffle trace rows and labels 
@@ -106,7 +106,7 @@ end
     # calculate ground truth
     m256 = Moments.UniVarMomentsAccVecLabel{BigFloat, UInt8, Array, NL}(order, size(a64, 2), 256)
     Moments.centered_sum_update!(m256, a256, l)
-    resultsref = m256.moments
+    resultsref = m256.ctrd_sums
 
     # perform `n` iterations
     for i in 1:n
@@ -118,14 +118,14 @@ end
         
         # store results
         if isempty(results32)
-            results32 = m32.moments
+            results32 = m32.ctrd_sums
         else
-            results32 = cat(results32, m32.moments, dims=5)
+            results32 = cat(results32, m32.ctrd_sums, dims=5)
         end
         if isempty(results64)
-            results64 = m64.moments
+            results64 = m64.ctrd_sums
         else
-            results64 = cat(results64, m64.moments, dims=5)
+            results64 = cat(results64, m64.ctrd_sums, dims=5)
         end
 
         # shuffle trace rows and labels 
@@ -194,9 +194,9 @@ end
         end
         
         # get final results
-        results32 = m32.moments
-        results64 = m64.moments
-        results256 = m256.moments
+        results32 = m32.ctrd_sums
+        results64 = m64.ctrd_sums
+        results256 = m256.ctrd_sums
 
         # analysis
         if batches == 1
@@ -250,8 +250,8 @@ end
         Moments.centered_sum_update!(m2, a_tile, l_tile)
     end
 
-    correct = all(isapprox.(m1.moments, m2.moments; rtol=1e-2))
-    prcnt_err = abs.((m2.moments .- m1.moments) ./ m1.moments).*100
+    correct = all(isapprox.(m1.ctrd_sums, m2.ctrd_sums; rtol=1e-2))
+    prcnt_err = abs.((m2.ctrd_sums .- m1.ctrd_sums) ./ m1.ctrd_sums).*100
 
     println("Moment merging algorithm test case percent error per order $(1:m1.order)")
     display(vec(mean(prcnt_err, dims=(1, 3))))
@@ -268,11 +268,11 @@ end
 #     Moments.centered_sum_update!(m2, a[1:10000, :], l[1:10000])
 #     Moments.centered_sum_update!(m2, a[10001:end, :], l[10001:end])
 
-#     @test all(isapprox.(m1.moments, m2.moments; rtol=1e-2))
-#     correct = all(isapprox.(m1.moments, m2.moments; rtol=1e-2))
+#     @test all(isapprox.(m1.ctrd_sums, m2.ctrd_sums; rtol=1e-2))
+#     correct = all(isapprox.(m1.ctrd_sums, m2.ctrd_sums; rtol=1e-2))
 #     println("Correct: $correct")
 
-#     prcnt_err = abs.((m2.moments .- m1.moments) ./ m1.moments).*100
+#     prcnt_err = abs.((m2.ctrd_sums .- m1.ctrd_sums) ./ m1.ctrd_sums).*100
 #     println("Moment merging algorithm test case percent error per order $(1:m1.order)")
 #     display(vec(mean(prcnt_err, dims=(1, 3))))
 # end
