@@ -63,7 +63,7 @@ function SNR_fit!(snr::SNRBasic{Tt, Tl}, traces, labels) where {Tt<:Real, Tl<:Re
 end
 
 function SNR_fit!(snr::AbstractMoMSNR, traces, labels)
-    centered_sum_update!(snr.moments, traces, labels)
+    fit_moments!(snr.moments, traces, labels)
 end
 
 function SNR_finalize(snr::SNRBasic{Tt, Tl})::Vector where {Tt<:Real, Tl<:Real}

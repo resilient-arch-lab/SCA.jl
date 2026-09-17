@@ -13,7 +13,7 @@ TODO:
 
 
 module Moments
-export centered_sum_update!, merge_from!, get_mean_and_var, UniVarMomentsAccIncremental, centered_sum_update_pass_1!, centered_sum_update_pass_2!
+export fit_moments!, merge_from!, get_mean_and_var, UniVarMomentsAccIncremental, centered_sum_update_pass_1!, centered_sum_update_pass_2!
 
 include("Utils.jl")
 using .Utils
@@ -49,8 +49,11 @@ end
 
 # initialize from dataset shape and labels
 function UniVarMomentsAccIncremental{Tt, Tl, Tarray}(order, a::Tarray, labels::Tarray) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+    @assert typeof(a) <: AbstractVecOrMat "a expected to be a Vector or Matrix, got $(typeof(a))"
+    @assert typeof(labels) <: AbstractVecOrMat "labels expected to be a Vector or Matrix, got $(typeof(labels))"
+    
     ns = size(a, 2)
-    ldim = size(l, 2)
+    ldim = size(labels, 2)
     lrange = length(unique(labels))
 
     totals = fill!(Tarray{UInt32, 2}(undef, ldim, lrange), 0)
@@ -61,29 +64,7 @@ function UniVarMomentsAccIncremental{Tt, Tl, Tarray}(order, a::Tarray, labels::T
     UniVarMomentsAccIncremental{Tt, Tl, Tarray}(totals, ctrd_sums, order, ns, lrange, ldim, _totals, _ctrd_sums, _sums)
 end
 
-function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
-    @inbounds AK.foraxes(traces, 1) do i
-        l_i = convert(Int32, labels[i]+1)
-        Atomix.@atomic totals[l_i] += 1
-        for j in axes(traces, 2)
-            Atomix.@atomic sums[l_i, j] += traces[i, j]
-        end
-    end
-end
-
-function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
-    @inbounds AK.foraxes(traces, 2) do j
-        for i in axes(traces, 1)
-            l_i = convert(Int32, labels[i]+1)
-            if j == 1
-                totals[l_i] += 1
-            end
-            sums[l_i, j] += traces[i, j]
-        end
-    end
-end
-
-function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
+function label_wise_sum_ak_transposed!(traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     @inbounds AK.foraxes(traces, 2) do j
         for i in axes(traces, 1)
             for l in axes(labels, 2)
@@ -98,7 +79,7 @@ function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::Abstr
 end
 
 # For multi-element labels
-function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
+function label_wise_sum_ak!(traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     @inbounds AK.foraxes(traces, 1) do i
         for l in axes(labels, 2)
             l_i = convert(Int32, labels[i, l]+1)
@@ -111,7 +92,7 @@ function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractVecOrMat
 end
 
 # simple, sequential label-wise sum op for cpu
-@inline function label_wise_sum!(traces::AbstractMatrix{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix) where {Tt<:AbstractFloat, Tl<:Integer}
+@inline function label_wise_sum!(traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix) where {Tt<:AbstractFloat, Tl<:Integer}
     for i in axes(traces, 1)
         for l in axes(labels, 2)
             l_i = convert(Int, labels[i, l])+1
@@ -123,41 +104,7 @@ end
     end
 end
 
-function centered_sum_kern_ak!(moments::AbstractArray{Tt, 3}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
-    order = size(moments, 2)
-
-    @inbounds AK.foraxes(traces, 1) do i
-        l_i = convert(Int32, labels[i]+1)
-        for j in axes(traces, 2)
-            t_update = traces[i, j] - moments[l_i, 1, j]
-            pow = t_update
-            for d in 2:order
-                pow *= t_update
-                Atomix.@atomic moments[l_i, d, j] += pow  # this line is like 90% of this functions runtime
-            end
-        end
-    end
-end
-
-# way better CPU performance (and better GPU performance) than non
-# transposed version due to elimination of atomic adds
-function centered_sum_kern_ak_transposed!(moments::AbstractArray{Tt, 3}, traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
-    order = size(moments, 2)
-
-    @inbounds AK.foraxes(traces, 2) do j
-        for i in axes(traces, 1)
-            l_i = convert(Int32, labels[i]+1)
-            t_update = traces[i, j] - moments[l_i, 1, j]
-            pow = t_update
-            for d in 2:order
-                pow *= t_update
-                moments[l_i, d, j] += pow
-            end
-        end
-    end
-end
-
-function centered_sum_kern_ak!(moments::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+function centered_sum_kern_ak!(moments::AbstractArray{Tt, 4}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     order = size(moments, 3)
     itr_view = @view moments[:, 1, 1, :]
 
@@ -176,7 +123,7 @@ function centered_sum_kern_ak!(moments::AbstractArray{Tt, 4}, traces::AbstractMa
     end
 end
 
-function centered_sum_kern_ak_atomic!(moments::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+function centered_sum_kern_ak_atomic!(moments::AbstractArray{Tt, 4}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     order = size(moments, 3)
 
     @inbounds AK.foreachindex(traces) do idx
@@ -195,7 +142,7 @@ function centered_sum_kern_ak_atomic!(moments::AbstractArray{Tt, 4}, traces::Abs
 end
 
 # simple, sequential centered sum update op for cpu
-@inline function centered_sum!(ctrd_sums::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+@inline function centered_sum!(ctrd_sums::AbstractArray{Tt, 4}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     order = size(ctrd_sums, 3)
     
     for i in axes(traces, 1)
@@ -269,7 +216,7 @@ function centered_sum_update_pass_2!(ctrd_sums::AbstractArray{Tt}, traces::Abstr
     return
 end
 
-function centered_sum_update!(acc::UniVarMomentsAccIncremental{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+function fit_moments!(acc::UniVarMomentsAccIncremental{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     centered_sum_update_pass_1!(acc, traces, labels)
     centered_sum_update_pass_2!(acc, traces, labels)
 end

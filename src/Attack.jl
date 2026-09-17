@@ -77,7 +77,7 @@ mutable struct PCAGaussianModel{Tt<:Real, Tl<:Integer, Ta<:AbstractArray}
 end
 
 function fit_model(model::PCAGaussianModel, traces::AbstractMatrix, labels::AbstractVector)
-    centered_sum_update!(model.moments, traces, labels)
+    fit_moments!(model.moments, traces, labels)
     means = model.moments.ctrd_sums[:, 1, :]
     model.PCA = fit(PCA, means', maxoutdim=model.n_PCA_dims)
     t_fit = predict(model.PCA, traces')'

@@ -31,7 +31,7 @@ struct TTestChunked{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
 end
 
 function ttest_fit!(ttest::TTestSingle{Tt, Tl}, traces, labels) where {Tt<:AbstractFloat, Tl<:Integer}
-    centered_sum_update!(ttest.moments, traces, labels)
+    fit_moments!(ttest.moments, traces, labels)
 end
 
 function ttest_fit!(ttest::TTestChunked{Tt, Tl}, traces, labels) where {Tt<:AbstractFloat, Tl<:Integer}

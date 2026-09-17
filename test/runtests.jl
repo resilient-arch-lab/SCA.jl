@@ -3,6 +3,26 @@ using Statistics
 using Random
 using Test
 
+@testset "Moment estimation dataset shape compatibility test" begin
+    amat = rand(Float32, 20000, 20)
+    avec = vec(amat[:, 1])
+    lmat = rand(UInt8, 20000, 4)
+    lvec = vec(lmat[:, 1])
+
+    m_avec_lvec = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(2, avec, lvec)
+    m_avec_lmat = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(2, avec, lmat)
+    m_amat_lvec = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(2, amat, lvec)
+    m_amat_lmat = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(2, amat, lmat)
+
+    Moments.fit_moments!(m_avec_lvec, avec, lvec)
+    Moments.fit_moments!(m_avec_lmat, avec, lmat)
+    Moments.fit_moments!(m_amat_lvec, amat, lvec)
+    Moments.fit_moments!(m_amat_lmat, amat, lmat)
+
+    @test all(m_avec_lvec.ctrd_sums[1, :, :, :] .≈ m_amat_lvec.ctrd_sums[1, :, :, 1])
+    @test all(m_avec_lvec.ctrd_sums[1, :, :, :] .≈ m_avec_lmat.ctrd_sums[1, :, :, 1])
+end
+
 @testset "Centered products estimation satability test 1: re-ordering error vs. float length (no merging)" begin
     NL = 2
     a32 = rand(Float32, 20000, 20)
@@ -22,8 +42,8 @@ using Test
         # estimate moments
         m32 = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(order, size(a32, 2), 256, NL)
         m64 = Moments.UniVarMomentsAccIncremental{Float64, UInt8, Array}(order, size(a64, 2), 256, NL)
-        Moments.centered_sum_update!(m32, a32, l)
-        Moments.centered_sum_update!(m64, a64, l)
+        Moments.fit_moments!(m32, a32, l)
+        Moments.fit_moments!(m64, a64, l)
         
         # store results
         if isempty(results32)
@@ -81,7 +101,7 @@ end
 
     # calculate ground truth
     m256 = Moments.UniVarMomentsAccIncremental{BigFloat, UInt8, Array}(order, size(a64, 2), 256, NL)
-    Moments.centered_sum_update!(m256, a256, l)
+    Moments.fit_moments!(m256, a256, l)
     resultsref = m256.ctrd_sums
 
     # perform `n` iterations
@@ -89,8 +109,8 @@ end
         # estimate moments
         m32 = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(order, size(a32, 2), 256, NL)
         m64 = Moments.UniVarMomentsAccIncremental{Float64, UInt8, Array}(order, size(a64, 2), 256, NL)
-        Moments.centered_sum_update!(m32, a32, l)
-        Moments.centered_sum_update!(m64, a64, l)
+        Moments.fit_moments!(m32, a32, l)
+        Moments.fit_moments!(m64, a64, l)
         
         # store results
         if isempty(results32)
@@ -164,9 +184,9 @@ end
         
         # run batch workloads
         for batch in 1:batches
-            Moments.centered_sum_update!(m256, a256_batches[batch, 1], l_batches[batch, 1])
-            Moments.centered_sum_update!(m64, a64_batches[batch, 1], l_batches[batch, 1])
-            Moments.centered_sum_update!(m32, a32_batches[batch, 1], l_batches[batch, 1])
+            Moments.fit_moments!(m256, a256_batches[batch, 1], l_batches[batch, 1])
+            Moments.fit_moments!(m64, a64_batches[batch, 1], l_batches[batch, 1])
+            Moments.fit_moments!(m32, a32_batches[batch, 1], l_batches[batch, 1])
         end
         
         # get final results

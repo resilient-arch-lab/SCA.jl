@@ -8,7 +8,7 @@ using KernelAbstractions
 import SCA.Moments: centered_sum_update_pass_1!, centered_sum_update_pass_2!
 
 
-function centered_sum_update!(acc::UniVarMomentsAccIncremental{Tt, Tl, Tarray}, traces::AbstractGPUArray{Tt}, labels::AbstractGPUArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractGPUArray}
+function fit_moments!(acc::UniVarMomentsAccIncremental{Tt, Tl, Tarray}, traces::AbstractGPUArray{Tt}, labels::AbstractGPUArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractGPUArray}
     # initialize intermediate values (these could be allocated on `acc` construction)
     fill!(acc._sums, 0)
     fill!(acc._ctrd_sums, 0)
@@ -32,7 +32,7 @@ function centered_sum_update!(acc::UniVarMomentsAccIncremental{Tt, Tl, Tarray}, 
 
     # compute centered sums
     # centered_sum_kern_ak!(acc._ctrd_sums, traces, labels)
-    # about 30% of centered_sum_update! runtime
+    # about 30% of fit_moments! runtime
     centered_sum_kern_ak_transposed!(acc._ctrd_sums, traces, labels)
 
     # merge centered sum estimations
@@ -45,7 +45,7 @@ function centered_sum_update!(acc::UniVarMomentsAccIncremental{Tt, Tl, Tarray}, 
     if any(update_ls)
         Threads.@threads for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
             @inbounds merge_from_ak!(view(acc.ctrd_sums, l, :, :), view(acc.totals, l), view(acc._ctrd_sums, l, :, :), view(acc._totals, l))
-            # roughly 40% of centered_sum_update! runtime (was 60 before I removed the δ_pows allocation)
+            # roughly 40% of fit_moments! runtime (was 60 before I removed the δ_pows allocation)
             # Also, this is runtime dispatched and garbage collected?
         end
         @inbounds acc.totals[update_ls] .+= acc._totals[update_ls]
@@ -81,7 +81,7 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAccIncrementalVecLabel{Tt
     return
 end
 
-function centered_sum_update!(acc::UniVarMomentsAccIncrementalVecLabel{Tt, Tl, Tarray}, traces::AbstractGPUArray{Tt}, labels::AbstractGPUArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractGPUArray}
+function fit_moments!(acc::UniVarMomentsAccIncrementalVecLabel{Tt, Tl, Tarray}, traces::AbstractGPUArray{Tt}, labels::AbstractGPUArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractGPUArray}
     centered_sum_update_pass_1!(acc, traces, labels)
     centered_sum_update_pass_2!(acc, traces, labels)
 end
