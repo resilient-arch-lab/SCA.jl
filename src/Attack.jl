@@ -65,13 +65,13 @@ end
 mutable struct PCAGaussianModel{Tt<:Real, Tl<:Integer, Ta<:AbstractArray}
     gaussian_model::GaussianModel{Tt, Tl}
     labels::UnitRange{Tl}
-    moments::UniVarMomentsAcc{Tt, Tl, Ta}
+    moments::UniVarMomentsAccIncremental{Tt, Tl, Ta}
     n_PCA_dims::Int
     PCA::Union{PCA, Nothing}
 
     function PCAGaussianModel{Tt, Tl, Ta}(nl::Int, ns::Int, n_PCA_dims::Int=3) where {Tt<:Real, Tl<:Integer, Ta<:AbstractArray}
         gaussian_model = GaussianModel{Tt, Tl}(nl)
-        m = UniVarMomentsAcc{Tt, Tl, Ta}(2, ns, nl)
+        m = UniVarMomentsAccIncremental{Tt, Tl, Ta}(2, ns, nl)
         new(gaussian_model, gaussian_model.labels, m, n_PCA_dims, nothing)
     end
 end

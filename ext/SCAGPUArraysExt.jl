@@ -1,14 +1,14 @@
 module SCAGPUArraysExt
 
 using SCA
-using SCA.Moments: UniVarMomentsAcc, UniVarMomentsAccVecLabel, label_wise_sum_ak!, centered_sum_kern_ak_transposed!, centered_sum_kern_ak!, centered_sum_kern_ak_atomic!, merge_from_ak!
+using SCA.Moments: UniVarMomentsAccIncremental, UniVarMomentsAccIncrementalVecLabel, label_wise_sum_ak!, centered_sum_kern_ak_transposed!, centered_sum_kern_ak!, centered_sum_kern_ak_atomic!, merge_from_ak!
 using GPUArrays
 using KernelAbstractions
 
 import SCA.Moments: centered_sum_update_pass_1!, centered_sum_update_pass_2!
 
 
-function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractGPUArray{Tt}, labels::AbstractGPUArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractGPUArray}
+function centered_sum_update!(acc::UniVarMomentsAccIncremental{Tt, Tl, Tarray}, traces::AbstractGPUArray{Tt}, labels::AbstractGPUArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractGPUArray}
     # initialize intermediate values (these could be allocated on `acc` construction)
     fill!(acc._sums, 0)
     fill!(acc._ctrd_sums, 0)
@@ -52,11 +52,11 @@ function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::Abs
     end
 end
 
-function centered_sum_update_pass_1!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractGPUArray{Tt}, labels::AbstractGPUArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractGPUArray, LD}
+function centered_sum_update_pass_1!(acc::UniVarMomentsAccIncrementalVecLabel{Tt, Tl, Tarray}, traces::AbstractGPUArray{Tt}, labels::AbstractGPUArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractGPUArray}
     @boundscheck begin
-        checkbounds(acc._sums, LD, acc.nl, size(traces, 2))
-        checkbounds(acc._ctrd_sums, LD, acc.nl, acc.order, size(traces, 2))
-        checkbounds(labels, size(traces, 1), LD)
+        checkbounds(acc._sums, acc.ldim, acc.nl, size(traces, 2))
+        checkbounds(acc._ctrd_sums, acc.ldim, acc.nl, acc.order, size(traces, 2))
+        checkbounds(labels, size(traces, 1), acc.ldim)
     end
 
     label_wise_sum_ak!(traces, labels, acc._sums, acc._totals)
@@ -64,11 +64,11 @@ function centered_sum_update_pass_1!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarra
     return
 end
 
-function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractGPUArray{Tt}, labels::AbstractGPUArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractGPUArray, LD}
+function centered_sum_update_pass_2!(acc::UniVarMomentsAccIncrementalVecLabel{Tt, Tl, Tarray}, traces::AbstractGPUArray{Tt}, labels::AbstractGPUArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractGPUArray}
     @boundscheck begin
-        checkbounds(acc._sums, LD, acc.nl, size(traces, 2))
-        checkbounds(acc._ctrd_sums, LD, acc.nl, acc.order, size(traces, 2))
-        checkbounds(labels, size(traces, 1), LD)
+        checkbounds(acc._sums, acc.ldim, acc.nl, size(traces, 2))
+        checkbounds(acc._ctrd_sums, acc.ldim, acc.nl, acc.order, size(traces, 2))
+        checkbounds(labels, size(traces, 1), acc.ldim)
     end
 
     @. acc._ctrd_sums[:, :, 1, :] = acc._sums / acc._totals
@@ -81,7 +81,7 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarra
     return
 end
 
-function centered_sum_update!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractGPUArray{Tt}, labels::AbstractGPUArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractGPUArray, LD}
+function centered_sum_update!(acc::UniVarMomentsAccIncrementalVecLabel{Tt, Tl, Tarray}, traces::AbstractGPUArray{Tt}, labels::AbstractGPUArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractGPUArray}
     centered_sum_update_pass_1!(acc, traces, labels)
     centered_sum_update_pass_2!(acc, traces, labels)
 end

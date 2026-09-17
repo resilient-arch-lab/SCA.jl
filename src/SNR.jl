@@ -3,7 +3,7 @@ Signal to Noise Ratio (SNR)
 """
 
 module SNR
-export SNRBasic, SNRMoments, SNROrdered, SNRVecLabel, SNR_fit!, SNR_finalize
+export SNRBasic, SNRMoM, SNR_fit!, SNR_finalize
 
 include("Utils.jl")
 using .Utils
@@ -31,34 +31,13 @@ mutable struct SNRBasic{Tt<:AbstractFloat, Tl<:Integer} <: AbstractSNR
     end
 end
 
-mutable struct SNRMoments{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray} <: AbstractMoMSNR
-    moments::UniVarMomentsAcc{Tt, Tl, Tarray}
-    nl::Int
-    ns::Int
-
-    function SNRMoments{Tt, Tl, Tarray}(ns::Int, nl::Int) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-        moments = UniVarMomentsAcc{Tt, Tl, Tarray}(2, ns, nl)
-        new{Tt, Tl, Tarray}(moments, nl, ns)
-    end
+struct SNRMoM{Tt<:AbstractFloat, Tl<:Integer} <: AbstractMoMSNR
+    moments::UniVarMomentsAccIncremental{Tt, Tl, Array}
 end
 
-mutable struct SNROrdered{Tt<:AbstractFloat, Tl<:Integer} <: AbstractMoMSNR
-    moments::UniVarMomentsAcc{Tt, Tl, Array}
-    order::Int
-
-    function SNROrdered{Tt, Tl}(ns::Int, nl::Int, order::Int = 1) where {Tt<:AbstractFloat, Tl<:Integer}
-        moments = UniVarMomentsAcc{Tt, Tl, Array}(2*order, ns, nl)
-        new(moments, order)
-    end
-end
-
-struct SNRVecLabel{Tt<:AbstractFloat, Tl<:Integer, LD} <: AbstractMoMSNR
-    moments::UniVarMomentsAccVecLabel{Tt, Tl, Array, LD}
-    
-    function SNRVecLabel{Tt, Tl, LD}(ns::Int, nl::Int) where {Tt<:AbstractFloat, Tl<:Integer, LD}
-        moments = UniVarMomentsAccVecLabel{Tt, Tl, Array, LD}(2, ns, nl)
-        new(moments)
-    end
+function SNRMoM{Tt, Tl}(ns::Int, nl::Int, ldim::Int) where {Tt<:AbstractFloat, Tl<:Integer}
+    moments = UniVarMomentsAccIncremental{Tt, Tl, Array}(2, ns, nl, ldim)
+    SNRMoM{Tt, Tl}(moments)
 end
 
 function SNR_fit!(snr::SNRBasic{Tt, Tl}, traces, labels) where {Tt<:Real, Tl<:Real}
@@ -83,7 +62,7 @@ function SNR_fit!(snr::SNRBasic{Tt, Tl}, traces, labels) where {Tt<:Real, Tl<:Re
     end
 end
 
-function SNR_fit!(snr::AbstractMoMSNR, traces, labels) where {Tt<:Real, Tl<:Real, LD}
+function SNR_fit!(snr::AbstractMoMSNR, traces, labels)
     centered_sum_update!(snr.moments, traces, labels)
 end
 
@@ -97,21 +76,7 @@ function SNR_finalize(snr::SNRBasic{Tt, Tl})::Vector where {Tt<:Real, Tl<:Real}
     signals ./ noises
 end
 
-function SNR_finalize(snr::SNRMoments{Tt, Tl})::Vector where {Tt<:Real, Tl<:Integer}
-    μ, σ2 = get_mean_and_var(snr.moments, 1)
-    signals = var(μ, dims=1)
-    noises = mean(σ2, dims=1)
-    vec(signals ./ noises)
-end
-
-function SNR_finalize(snr::SNROrdered)::Vector 
-    μ, σ2 = get_mean_and_var(snr.moments, snr.order)
-    signals = var(μ, dims=1)
-    noises = mean(σ2, dims=1)
-    signals ./ noises
-end
-
-function SNR_finalize(snr::SNRVecLabel{Tt, Tl, LD})::Matrix where {Tt<:Real, Tl<:Integer, LD}
+function SNR_finalize(snr::AbstractMoMSNR)::Matrix
     μ, σ2 = get_mean_and_var(snr.moments, 1)
     signals = var(μ, dims=2)
     noises = mean(σ2, dims=2)

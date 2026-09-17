@@ -7,12 +7,12 @@ include("Moments.jl")
 using .Moments
 
 struct TTestSingle{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    moments::UniVarMomentsAcc{Tt, Tl, Tarray}
+    moments::UniVarMomentsAccIncremental{Tt, Tl, Tarray}
     order::Int
     ns::Int
 
     function TTestSingle{Tt, Tl, Tarray}(order::Int, ns::Int) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-        moments = UniVarMomentsAcc{Tt, Tl, Tarray}(2*order, ns, 2)
+        moments = UniVarMomentsAccIncremental{Tt, Tl, Tarray}(2*order, ns, 2, 1)
         new(moments, order, ns)
     end
 end
@@ -58,8 +58,8 @@ end
 # DOES NOT WORK ON GPU (because of scalar indexing in the last line)
 function ttest_finalize(ttest::TTestSingle{Tt, Tl, Tarray}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     μ, σ = get_mean_and_var(ttest.moments, ttest.order)
-    μ1, μ2 = view(μ, 1, :), view(μ, 2, :) 
-    σ1, σ2 = view(σ, 1, :), view(σ, 2, :) 
+    μ1, μ2 = view(μ, 1, 1, :), view(μ, 1, 2, :) 
+    σ1, σ2 = view(σ, 1, 1, :), view(σ, 1, 2, :) 
     t = (μ1 - μ2) ./ sqrt.((σ1 ./ ttest.moments.totals[1]) .+ (σ2 ./ ttest.moments.totals[2]))
 end
 

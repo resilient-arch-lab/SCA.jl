@@ -3,30 +3,6 @@ using Statistics
 using Random
 using Test
 
-
-# Test precision / stability of centered sum merging formula [Prop. 2.1, 10.2172/1028931]
-# with reference to a single centered sum calculation on the same data, requiring no merge
-# operation. Initial results are inconsistent even with a relative tolarance of 1. 
-@testset "Moment merging precision comparison (Legacy reference function)" begin
-    a = rand(10000, 20)
-    l = rand(UInt8, 10000)
-    m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
-    m2 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
-
-    a_tiles, l_tiles = Utils.tiled_view(a, (5000, 20)), Utils.tiled_view(l, (5000, ))
-
-    Moments.centered_sum_update_old!(m1, a, l)
-    for (a_tile, l_tile) in zip(a_tiles, l_tiles)
-        Moments.centered_sum_update_old!(m2, a_tile, l_tile)
-    end
-
-    correct = all(isapprox.(m1.ctrd_sums, m2.ctrd_sums; rtol=1e-2))
-    prcnt_err = abs.((m2.ctrd_sums .- m1.ctrd_sums) ./ m1.ctrd_sums).*100
-
-    println("Moment merging algorithm test case percent error per order $(1:m1.order)")
-    display(vec(mean(prcnt_err, dims=(1, 3))))
-end
-
 @testset "Centered products estimation satability test 1: re-ordering error vs. float length (no merging)" begin
     NL = 2
     a32 = rand(Float32, 20000, 20)
@@ -44,8 +20,8 @@ end
     # perform `n` iterations
     for i in 1:n
         # estimate moments
-        m32 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, Array, NL}(order, size(a32, 2), 256)
-        m64 = Moments.UniVarMomentsAccVecLabel{Float64, UInt8, Array, NL}(order, size(a64, 2), 256)
+        m32 = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(order, size(a32, 2), 256, NL)
+        m64 = Moments.UniVarMomentsAccIncremental{Float64, UInt8, Array}(order, size(a64, 2), 256, NL)
         Moments.centered_sum_update!(m32, a32, l)
         Moments.centered_sum_update!(m64, a64, l)
         
@@ -104,15 +80,15 @@ end
     println("")
 
     # calculate ground truth
-    m256 = Moments.UniVarMomentsAccVecLabel{BigFloat, UInt8, Array, NL}(order, size(a64, 2), 256)
+    m256 = Moments.UniVarMomentsAccIncremental{BigFloat, UInt8, Array}(order, size(a64, 2), 256, NL)
     Moments.centered_sum_update!(m256, a256, l)
     resultsref = m256.ctrd_sums
 
     # perform `n` iterations
     for i in 1:n
         # estimate moments
-        m32 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, Array, NL}(order, size(a32, 2), 256)
-        m64 = Moments.UniVarMomentsAccVecLabel{Float64, UInt8, Array, NL}(order, size(a64, 2), 256)
+        m32 = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(order, size(a32, 2), 256, NL)
+        m64 = Moments.UniVarMomentsAccIncremental{Float64, UInt8, Array}(order, size(a64, 2), 256, NL)
         Moments.centered_sum_update!(m32, a32, l)
         Moments.centered_sum_update!(m64, a64, l)
         
@@ -175,9 +151,9 @@ end
 
     for batches in batch_settings
         # initialize accumulator structs
-        m256 = Moments.UniVarMomentsAccVecLabel{BigFloat, UInt8, Array, NL}(order, size(a256, 2), 256)
-        m64 = Moments.UniVarMomentsAccVecLabel{Float64, UInt8, Array, NL}(order, size(a64, 2), 256)
-        m32 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, Array, NL}(order, size(a32, 2), 256)
+        m256 = Moments.UniVarMomentsAccIncremental{BigFloat, UInt8, Array}(order, size(a256, 2), 256, NL)
+        m64 = Moments.UniVarMomentsAccIncremental{Float64, UInt8, Array}(order, size(a64, 2), 256, NL)
+        m32 = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(order, size(a32, 2), 256, NL)
         
         batch_size = (Int(ceil(size(a32, 1) / batches)), size(a32, 2))
 
@@ -235,26 +211,6 @@ end
 
 
 
-end
-
-@testset "Moment merging precision comparison" begin
-    a = rand(10000, 20)
-    l = rand(UInt8, 10000)
-    m1 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
-    m2 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(10, 20, 256)
-
-    a_tiles, l_tiles = Utils.tiled_view(a, (5000, 20)), Utils.tiled_view(l, (5000, ))
-
-    Moments.centered_sum_update!(m1, a, l)
-    for (a_tile, l_tile) in zip(a_tiles, l_tiles)
-        Moments.centered_sum_update!(m2, a_tile, l_tile)
-    end
-
-    correct = all(isapprox.(m1.ctrd_sums, m2.ctrd_sums; rtol=1e-2))
-    prcnt_err = abs.((m2.ctrd_sums .- m1.ctrd_sums) ./ m1.ctrd_sums).*100
-
-    println("Moment merging algorithm test case percent error per order $(1:m1.order)")
-    display(vec(mean(prcnt_err, dims=(1, 3))))
 end
 
 @testset "Test that Chunked TTest is equivalent on dimension 2" begin

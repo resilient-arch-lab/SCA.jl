@@ -58,8 +58,8 @@ end
 function bench_Moments_centered_sum_update(TArray::Type = Array)
     t = TArray(rand(Float32, 300000, 1000))
     l = TArray(rand(UInt8, 300000))
-    m1 = Moments.UniVarMomentsAcc{Float32, UInt8, Array}(10, 1000, 256)
-    m2 = Moments.UniVarMomentsAcc{Float32, UInt8, Array}(10, 1000, 256)
+    m1 = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(10, 1000, 256)
+    m2 = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(10, 1000, 256)
     
     Moments.centered_sum_update_old!(m1, t, l)
     Moments.centered_sum_update!(m2, t, l)
@@ -74,8 +74,8 @@ end
 function bench_Moments_centered_sum_update_vs_cpu(TArray::Type = Array)
     t = TArray(rand(Float32, 300000, 1000))
     l = TArray(rand(UInt8, 300000))
-    m1 = Moments.UniVarMomentsAcc{Float32, UInt8, Array}(10, 1000, 256)
-    m2 = Moments.UniVarMomentsAcc{Float32, UInt8, TArray}(10, 1000, 256)
+    m1 = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(10, 1000, 256)
+    m2 = Moments.UniVarMomentsAccIncremental{Float32, UInt8, TArray}(10, 1000, 256)
     
     Moments.centered_sum_update!(m2, t, l)
     Moments.centered_sum_update!(m1, t, l)
@@ -93,8 +93,8 @@ end
 function bench_Moments_centered_sum_update_vs_combined(TArray::Type = Array)
     t = TArray(rand(Float32, 300000, 1000))
     l = TArray(rand(UInt8, 300000))
-    m1 = Moments.UniVarMomentsAcc{Float32, UInt8, Array}(10, 1000, 256)
-    m2 = Moments.UniVarMomentsAcc{Float32, UInt8, Array}(10, 1000, 256)
+    m1 = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(10, 1000, 256)
+    m2 = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(10, 1000, 256)
     
     Moments.centered_sum_update_combined!(m2, t, l)
     Moments.centered_sum_update!(m1, t, l)
@@ -112,11 +112,11 @@ end
 function bench_Moments_VecLabel(TArray::Type = Array)
     t = TArray(rand(Float32, 100000, 1000))
     l = TArray(rand(UInt8, 100000, 16))
-    # m1 = Moments.UniVarMomentsAcc{Float32, UInt8, TArray}(8, 1000, 256)
-    m2 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, TArray, 8}(8, 1000, 256)
-    m3 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, TArray, 16}(8, 1000, 256)
-    m4 = Moments.UniVarMomentsAccVecLabel{Float32, UInt8, TArray, 4}(8, 1000, 256)
-    # mlist = [Moments.UniVarMomentsAcc{Float32, UInt8, TArray}(8, 1000, 256) for _ in 1:8]
+    # m1 = Moments.UniVarMomentsAccIncremental{Float32, UInt8, TArray}(8, 1000, 256)
+    m2 = Moments.UniVarMomentsAccIncrementalVecLabel{Float32, UInt8, TArray, 8}(8, 1000, 256)
+    m3 = Moments.UniVarMomentsAccIncrementalVecLabel{Float32, UInt8, TArray, 16}(8, 1000, 256)
+    m4 = Moments.UniVarMomentsAccIncrementalVecLabel{Float32, UInt8, TArray, 4}(8, 1000, 256)
+    # mlist = [Moments.UniVarMomentsAccIncremental{Float32, UInt8, TArray}(8, 1000, 256) for _ in 1:8]
 
     # bench_suite["Centered Sum Update, 1 scalar label"] = @benchmarkable Moments.centered_sum_update!($m1, $t, $l[:, 1])
     bench_suite["Centered Sum Update, vec 4 label"] = @benchmarkable Moments.centered_sum_update!($m4, $t, $(l[:, 1:4]))  # [106μs on RX9070XT]

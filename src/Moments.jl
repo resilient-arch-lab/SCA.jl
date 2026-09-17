@@ -3,8 +3,17 @@ Parallel estimation of statistical moments. based on the implementation from
 [SCALib](https://github.com/simple-crypto/SCALib).
 """
 
+"""
+TODO:
+- Get rid of non-VecLabel acc and make the VecLabel methods handle label vectors (just rehsape them as n X 1 matrices)
+- Make a single function `fit!` to apply to incremental and non incremental MomentsAccs
+- Make functions `raw_moments`, `central_moments`, and `standardized_moments` for `AbstractMomentsAcc`
+- Move multivariate stuff here from testing branch
+"""
+
+
 module Moments
-export UniVarMomentsAcc, centered_sum_update!, merge_from!, get_mean_and_var, UniVarMomentsAccVecLabel, centered_sum_update_pass_1!, centered_sum_update_pass_2!
+export centered_sum_update!, merge_from!, get_mean_and_var, UniVarMomentsAccIncremental, centered_sum_update_pass_1!, centered_sum_update_pass_2!
 
 include("Utils.jl")
 using .Utils
@@ -14,50 +23,44 @@ using KernelAbstractions, Atomix
 import AcceleratedKernels as AK
 using Base: convert
 
-# TODO: I'm not convinced this actually needs to be parameterized on the array type, and it
-# does complicate things slightly.
-# TODO: This should be able to handle mutli-dimensional labels (e.g. vector labels)
-struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+abstract type AbstractMomentsAcc end
+abstract type AbstractUnivariateMomentsAcc <: AbstractMomentsAcc end
+
+struct UniVarMomentsAccIncremental{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray} <: AbstractUnivariateMomentsAcc
     totals::Tarray
     ctrd_sums::Tarray
     order::UInt
     ns::UInt
-    nl::UInt
-    _totals::Tarray
-    _ctrd_sums::Tarray
-    _raw_sums::Tarray
-
-    function UniVarMomentsAcc{Tt, Tl, Tarray}(order, ns, nl) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-        totals = fill!(Tarray{UInt32, 1}(undef, nl), 0)
-        ctrd_sums = fill!(Tarray{Tt, 3}(undef, nl, order, ns), 0)
-        _totals = similar(totals)
-        _ctrd_sums = similar(ctrd_sums)
-        _sums = Tarray{Tt, 2}(undef, nl, ns)
-        new(totals, ctrd_sums, order, ns, nl, _totals, _ctrd_sums, _sums)
-    end
-end
-
-struct UniVarMomentsAccVecLabel{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
-    totals::Tarray
-    ctrd_sums::Tarray
-    order::UInt
-    ns::UInt
-    nl::UInt
+    lrange::UInt
+    ldim::UInt
     _totals::Tarray
     _ctrd_sums::Tarray
     _sums::Tarray
-
-    function UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}(order, ns, nl) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD} 
-        totals = fill!(Tarray{UInt32, 2}(undef, LD, nl), 0)
-        ctrd_sums = fill!(Tarray{Tt, 4}(undef, LD, nl, order, ns), 0)
-        _totals = fill!(similar(totals), 0)
-        _ctrd_sums = fill!(similar(ctrd_sums), 0)
-        _sums = fill!(Tarray{Tt, 3}(undef, LD, nl, ns), 0)
-        new{Tt, Tl, Tarray, LD}(totals, ctrd_sums, order, ns, nl, _totals, _ctrd_sums, _sums)
-    end
 end
 
-# Works on CPU and GPU
+function UniVarMomentsAccIncremental{Tt, Tl, Tarray}(order, ns, lrange, ldim) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray} 
+    totals = fill!(Tarray{UInt32, 2}(undef, ldim, lrange), 0)
+    ctrd_sums = fill!(Tarray{Tt, 4}(undef, ldim, lrange, order, ns), 0)
+    _totals = fill!(similar(totals), 0)
+    _ctrd_sums = fill!(similar(ctrd_sums), 0)
+    _sums = fill!(Tarray{Tt, 3}(undef, ldim, lrange, ns), 0)
+    UniVarMomentsAccIncremental{Tt, Tl, Tarray}(totals, ctrd_sums, order, ns, lrange, ldim, _totals, _ctrd_sums, _sums)
+end
+
+# initialize from dataset shape and labels
+function UniVarMomentsAccIncremental{Tt, Tl, Tarray}(order, a::Tarray, labels::Tarray) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+    ns = size(a, 2)
+    ldim = size(l, 2)
+    lrange = length(unique(labels))
+
+    totals = fill!(Tarray{UInt32, 2}(undef, ldim, lrange), 0)
+    ctrd_sums = fill!(Tarray{Tt, 4}(undef, ldim, lrange, order, ns), 0)
+    _totals = fill!(similar(totals), 0)
+    _ctrd_sums = fill!(similar(ctrd_sums), 0)
+    _sums = fill!(Tarray{Tt, 3}(undef, ldim, lrange, ns), 0)
+    UniVarMomentsAccIncremental{Tt, Tl, Tarray}(totals, ctrd_sums, order, ns, lrange, ldim, _totals, _ctrd_sums, _sums)
+end
+
 function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     @inbounds AK.foraxes(traces, 1) do i
         l_i = convert(Int32, labels[i]+1)
@@ -68,7 +71,6 @@ function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractVector{T
     end
 end
 
-# Faster on CPU than non-transposed
 function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, sums::AbstractMatrix{Tt}, totals::AbstractVector{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     @inbounds AK.foraxes(traces, 2) do j
         for i in axes(traces, 1)
@@ -81,24 +83,7 @@ function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::Abstr
     end
 end
 
-function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::AbstractVector{Tl}, nl::Int)::Tuple{AbstractMatrix{Tt}, AbstractVector{UInt32}} where {Tt<:AbstractFloat, Tl<:Integer}
-    sums = zeros(eltype(traces), nl, size(traces, 2))
-    totals = zeros(UInt32, nl)
-    
-    @inbounds AK.foraxes(traces, 2) do j
-        for i in axes(traces, 1)
-            l_i = convert(Int32, labels[i]+1)
-            if j == 1
-                totals[l_i] += 1
-            end
-            sums[l_i, j] += traces[i, j]
-        end
-    end
-
-    return sums, totals
-end
-
-function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
+function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     @inbounds AK.foraxes(traces, 2) do j
         for i in axes(traces, 1)
             for l in axes(labels, 2)
@@ -113,7 +98,7 @@ function label_wise_sum_ak_transposed!(traces::AbstractMatrix{Tt}, labels::Abstr
 end
 
 # For multi-element labels
-function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
+function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     @inbounds AK.foraxes(traces, 1) do i
         for l in axes(labels, 2)
             l_i = convert(Int32, labels[i, l]+1)
@@ -126,7 +111,7 @@ function label_wise_sum_ak!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{T
 end
 
 # simple, sequential label-wise sum op for cpu
-@inline function label_wise_sum!(traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix) where {Tt<:AbstractFloat, Tl<:Integer}
+@inline function label_wise_sum!(traces::AbstractMatrix{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix) where {Tt<:AbstractFloat, Tl<:Integer}
     for i in axes(traces, 1)
         for l in axes(labels, 2)
             l_i = convert(Int, labels[i, l])+1
@@ -172,7 +157,7 @@ function centered_sum_kern_ak_transposed!(moments::AbstractArray{Tt, 3}, traces:
     end
 end
 
-function centered_sum_kern_ak!(moments::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+function centered_sum_kern_ak!(moments::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     order = size(moments, 3)
     itr_view = @view moments[:, 1, 1, :]
 
@@ -191,7 +176,7 @@ function centered_sum_kern_ak!(moments::AbstractArray{Tt, 4}, traces::AbstractMa
     end
 end
 
-function centered_sum_kern_ak_atomic!(moments::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+function centered_sum_kern_ak_atomic!(moments::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     order = size(moments, 3)
 
     @inbounds AK.foreachindex(traces) do idx
@@ -210,7 +195,7 @@ function centered_sum_kern_ak_atomic!(moments::AbstractArray{Tt, 4}, traces::Abs
 end
 
 # simple, sequential centered sum update op for cpu
-@inline function centered_sum!(ctrd_sums::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractMatrix{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+@inline function centered_sum!(ctrd_sums::AbstractArray{Tt, 4}, traces::AbstractMatrix{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     order = size(ctrd_sums, 3)
     
     for i in axes(traces, 1)
@@ -228,82 +213,12 @@ end
     end
 end
 
-# Update the estimation of centered sums in `acc`
-# Note: Tarray must be `Array`, as the struct must live in CPU memory. However, if
-# `traces` and `labels` are GPU arrays, as much computation as possible will be done
-# on GPU before finalizing results on the CPU.
-function centered_sum_update_old!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    # Initialize intermediate values
-    sums = fill!(similar(traces, Tt, acc.nl, acc.ns), 0)
-    moments = fill!(similar(traces, Tt, size(acc.ctrd_sums)), 0)
-    totals = fill!(similar(traces, UInt32, size(acc.totals)), 0)
-
-    label_wise_sum_ak!(traces, labels, sums, totals)
-
-    # find means
-    @. moments[:, 1, :] = sums / totals
-
-    # compute centered sums
-    centered_sum_kern_ak!(moments, traces, labels)
-
-    # This has to be performed on CPU for now, its a pretty complicated OP
-    merge_from_old!(acc, Tarray(moments), Tarray(totals))
-end
-
-# works end-to-end on CPU or GPU
-# TODO: Figure out why this segfaults with AMDGPU when Tarray is ROCArray
-#   Works with CUDA, weird...
-#   - It happens during merging, on init
-function centered_sum_update!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    fill!(acc._raw_sums, 0)
-    fill!(acc._ctrd_sums, 0)
-    fill!(acc._totals, 0)
-
-    if get_backend(traces) != get_backend(acc._raw_sums)
-        traces = Tarray(traces)
-    end
-    if get_backend(labels) != get_backend(acc._raw_sums)
-        labels = Tarray(labels)
-    end
-
-    @boundscheck begin
-        checkbounds(acc._raw_sums, acc.nl, size(traces, 2))
-        checkbounds(acc._ctrd_sums, acc.nl, acc.order, size(traces, 2))
-        checkbounds(labels, size(traces, 1))
-    end
-
-    label_wise_sum_ak_transposed!(traces, labels, acc._raw_sums, acc._totals)
-
-    # find means
-    @. acc._ctrd_sums[:, 1, :] = acc._raw_sums / acc._totals
-
-    # compute centered sums
-    centered_sum_kern_ak_transposed!(acc._ctrd_sums, traces, labels)  # about 30% of centered_sum_update! runtime
-
-    # merge centered sum estimations
-    init_ls = acc.totals .== 0
-    update_ls = acc.totals .!= 0
-    if any(init_ls)
-        @inbounds acc.ctrd_sums[init_ls, :, :] .= acc._ctrd_sums[init_ls, :, :]
-        @inbounds acc.totals[init_ls] .= acc._totals[init_ls]
-    end
-    if any(update_ls)
-        Threads.@threads for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
-            @inbounds merge_from_ak!(view(acc.ctrd_sums, l, :, :), view(acc.totals, l), view(acc._ctrd_sums, l, :, :), view(acc._totals, l))
-            # roughly 40% of centered_sum_update! runtime (was 60 before I removed the δ_pows allocation)
-            # Also, this is runtime dispatched and garbage collected?
-        end
-        @inbounds acc.totals[update_ls] .+= acc._totals[update_ls]
-    end
-    return nothing
-end
-
 # First pass in two pass approach
-function centered_sum_update_pass_1!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
+function centered_sum_update_pass_1!(acc::UniVarMomentsAccIncremental{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     @boundscheck begin
-        checkbounds(acc._sums, LD, acc.nl, size(traces, 2))
-        checkbounds(acc._ctrd_sums, LD, acc.nl, acc.order, size(traces, 2))
-        checkbounds(labels, size(traces, 1), LD)
+        checkbounds(acc._sums, acc.ldim, acc.lrange, size(traces, 2))
+        checkbounds(acc._ctrd_sums, acc.ldim, acc.lrange, acc.order, size(traces, 2))
+        checkbounds(labels, size(traces, 1), acc.ldim)
     end
     
     fill!(acc._ctrd_sums, 0)
@@ -320,13 +235,12 @@ function centered_sum_update_pass_1!(sums::AbstractArray{Tt}, totals::AbstractAr
     return
 end
 
-# TODO: Make this support merging
 # Second pass in two pass approach
-function centered_sum_update_pass_2!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
+function centered_sum_update_pass_2!(acc::UniVarMomentsAccIncremental{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     @boundscheck begin
-        checkbounds(acc._sums, LD, acc.nl, size(traces, 2))
-        checkbounds(acc._ctrd_sums, LD, acc.nl, acc.order, size(traces, 2))
-        checkbounds(labels, size(traces, 1), LD)
+        checkbounds(acc._sums, acc.ldim, acc.lrange, size(traces, 2))
+        checkbounds(acc._ctrd_sums, acc.ldim, acc.lrange, acc.order, size(traces, 2))
+        checkbounds(labels, size(traces, 1), acc.ldim)
     end
 
     @. acc._ctrd_sums[:, :, 1, :] = acc._sums / acc._totals
@@ -355,7 +269,7 @@ function centered_sum_update_pass_2!(ctrd_sums::AbstractArray{Tt}, traces::Abstr
     return
 end
 
-function centered_sum_update!(acc::UniVarMomentsAccVecLabel{Tt, Tl, Tarray, LD}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray, LD}
+function centered_sum_update!(acc::UniVarMomentsAccIncremental{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     centered_sum_update_pass_1!(acc, traces, labels)
     centered_sum_update_pass_2!(acc, traces, labels)
 end
@@ -394,71 +308,6 @@ function centered_sum_update(traces::Matrix{Tt}, labels::Matrix{Tl}, nl::Int, or
     @views moments[:, :, 2:end, :] .= cat(sum(map(m -> m[:, :, 2:end, :], moments_scratch), dims=(1))..., dims=(4))
 
     return moments
-end
-
-# Precision (even with Float64) seems to degrade from performing the same 
-# computation in a single centered_sum_update! for the same data. Use of 
-# this should be minimized, prefer larger update batches whenever possible
-function merge_from_old!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, CS_new::Array{Tt, 3}, totals_new::Array{UInt32, 1}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    if all(totals_new .== 0)
-        return nothing
-    end
-    if all(acc.totals .== 0)
-        # If this is the first estimation, the acc values can be updated directly
-        acc.ctrd_sums .= CS_new
-        acc.totals .= totals_new
-        return nothing
-    end
-
-    δ = view(CS_new, :, 1, :) - view(acc.ctrd_sums, :, 1, :)
-    δ_pows = fill!(Tarray{Tt, 2}(undef, acc.order+1, acc.ns), 0)
-    CS_old, totals_old = view(acc.ctrd_sums, :, :, :), view(acc.totals, :)
-    totals_result = totals_old .+ totals_new
-    kern_order = Int(acc.order)
-
-    for l_idx in axes(totals_old, 1)
-        CS_old_i = view(CS_old, l_idx, :, :)
-        CS_new_i = view(CS_new, l_idx, :, :)
-
-        if totals_new[l_idx] == 0
-            continue
-        end
-        if totals_old[l_idx] == 0
-            CS_old_i .= CS_new_i
-            totals_old[l_idx] = totals_new[l_idx]
-            continue
-        end
-
-        for j in axes(δ_pows, 1)
-            view(δ_pows, j, :) .= view(δ, l_idx, :).^j
-        end
-        for p in kern_order:-1:2
-            (as_input1, to_update1) = view(CS_old_i, 1:p-1, :), view(CS_old_i, p, :)
-            (as_input2, to_update2) = view(CS_new_i, 1:p-1, :), view(CS_new_i, p, :)
-
-            to_update1 .+= to_update2
-
-            for k in 1:p-2
-                δ_pows_k = δ_pows[k, :]
-                cst = binomial(k, p)
-                tmp2 = view(as_input1, p-k, :) .* ((-totals_new[l_idx]/totals_result[l_idx]).^k)
-                tmp3 = view(as_input2, p-k, :) .* ((totals_old[l_idx]/totals_result[l_idx]).^k)
-                x = tmp2 .+ tmp3
-                to_update1 .+= (δ_pows_k .* cst) .* x
-            end
-            tmp = (1/(totals_new[l_idx]^(p-1))) - ((-1/totals_old[l_idx])^(p-1))
-            tmp *= ((totals_old[l_idx] * totals_new[l_idx])/totals_result[l_idx])^p
-
-            to_update1 .+= δ_pows[p, :] .* tmp
-        end
-        view(CS_old_i, 1, :) .+= (view(δ, l_idx, :) .* (totals_new[l_idx]/totals_result[l_idx]))  # update mean seperately
-    end
-    totals_old .= totals_result
-    return nothing
-end
-
-function merge_from!(acc::UniVarMomentsAcc{Tt, Tl, Tarray}, acc_new::UniVarMomentsAcc{Tt, Tl, Tarray}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    merge_from!(acc, acc_new.ctrd_sums, acc_new.totals)
 end
 
 # TODO: This seems to be consistently innaccurate, not due to floating point precision issues. I should
@@ -506,32 +355,16 @@ function merge_from_ak!(CS_old::AbstractArray{Tt, 2}, total_old::AbstractArray{U
     return nothing
 end
 
-function centered_moment(m::UniVarMomentsAcc, d::Int)
+function centered_moment(m::UniVarMomentsAccIncremental, d::Int)
     if d == 1
-        @views CM_d = m.ctrd_sums[:, 1, :]
+        @views CM_d = m.ctrd_sums[:, :, 1, :]
     else 
-        @views CM_d = m.ctrd_sums[:, d, :] ./ m.totals
+        @views CM_d = m.ctrd_sums[:, :, d, :] ./ m.totals
     end
     return CM_d
 end
 
-function get_mean_and_var(m::UniVarMomentsAcc, d::Int)
-    if d == 1
-        @inbounds μ = @view m.ctrd_sums[:, 1, :]
-        @inbounds σ2 = m.ctrd_sums[:, 2, :] ./ m.totals
-        return μ, σ2
-    elseif d == 2
-        @inbounds μ = m.ctrd_sums[:, 2, :] ./ m.totals
-        @inbounds σ2 = m.ctrd_sums[:, 4, :] ./ m.totals
-        return μ, σ2
-    elseif d > 2
-        @inbounds μ = (m.ctrd_sums[:, d, :] ./ m.totals) ./ ((m.ctrd_sums[:, 2, :] ./ m.totals).^(d/2))
-        @inbounds σ2 = ((m.ctrd_sums[:, 2*d, :] ./ m.totals) .- ((m.ctrd_sums[:, d, :] ./ m.totals).^2)) ./ ((m.ctrd_sums[:, 2, :] ./ m.totals).^d)
-        return μ, σ2
-    end
-end
-
-function get_mean_and_var(m::UniVarMomentsAccVecLabel, d::Int)
+function get_mean_and_var(m::UniVarMomentsAccIncremental, d::Int)
     if d == 1
         @inbounds μ = @view m.ctrd_sums[:, :, 1, :]
         @inbounds σ2 = m.ctrd_sums[:, :, 2, :] ./ m.totals
