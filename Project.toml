@@ -25,7 +25,7 @@ GPUArrays = "0c68f7d7-f131-5f86-a1c3-88cf8149b2d7"
 
 [extensions]
 SCADaggerExt = "Dagger"
-SCADiskArraysExt = ["DiskArrays", "Dagger"]
+SCADaggerDiskArraysExt = ["Dagger", "DiskArrays"]
 SCAGPUArraysExt = "GPUArrays"
 
 [compat]
