@@ -10,7 +10,7 @@ Random.seed!(12)
 @testset "Multivariate Moment Estimation" begin
     ns = 2  # must = 2 so that covariance can be calculated from the sums of centered products
     order = 1  # must = 1 for same reason
-    m = Moments.MultiVarMomentsAcc{Float64, UInt8, Array}(order, ns, 256, 1)
+    m = Moments.MultiVarMomentsAccIncremental{Float64, UInt8, Array}(order, ns, 256, 1)
     a = rand(50000, ns)  # lots of measurements are required for `cov` and `centered_sum_update` to converge
                          # since covariance is calculated per label and there are 256 labels
     l = rand(UInt8, 50000)

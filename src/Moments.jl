@@ -1,6 +1,5 @@
 """
-Parallel estimation of statistical moments. based on the implementation from
-[SCALib](https://github.com/simple-crypto/SCALib).
+Parallel estimation of statistical moments
 """
 
 """
@@ -27,6 +26,21 @@ using StaticArrays
 abstract type AbstractMomentsAcc end
 abstract type AbstractUnivariateMomentsAcc <: AbstractMomentsAcc end
 abstract type AbstractMultivariateMomentsAcc <: AbstractMomentsAcc end
+
+struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray} <: AbstractUnivariateMomentsAcc
+    totals::Tarray
+    ctrd_sums::Tarray
+    order::UInt
+    ns::UInt
+    lrange::UInt
+    ldim::UInt
+end
+
+function UniVarMomentsAcc{Tt, Tl, Tarray}(order, ns, lrange, ldim) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+    totals = fill!(Tarray{UInt32, 2}(undef, ldim, lrange), 0)
+    ctrd_sums = fill!(Tarray{Tt, 4}(undef, ldim, lrange, order, ns), 0)
+    UniVarMomentsAcc{Tt, Tl, Tarray}(totals, ctrd_sums, order, ns, lrange, ldim)
+end
 
 struct UniVarMomentsAccIncremental{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray} <: AbstractUnivariateMomentsAcc
     totals::Tarray
@@ -66,7 +80,21 @@ function UniVarMomentsAccIncremental{Tt, Tl, Tarray}(order, a::Tarray, labels::T
     UniVarMomentsAccIncremental{Tt, Tl, Tarray}(totals, ctrd_sums, order, ns, lrange, ldim, _totals, _ctrd_sums, _sums)
 end
 
-struct MultiVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray} <: AbstractMultivariateMomentsAcc
+# initialize from non-incremental struct
+function UniVarMomentsAccIncremental{Tt, Tl, Tarray}(acc::UniVarMomentsAcc) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+    ns = acc.ns
+    ldim = acc.ldim
+    lrange = acc.lrange
+
+    totals = acc.totals
+    ctrd_sums = acc.ctrd_sums
+    _totals = fill!(similar(totals), 0)
+    _ctrd_sums = fill!(similar(ctrd_sums), 0)
+    _sums = fill!(Tarray{Tt, 3}(undef, ldim, lrange, ns), 0)
+    UniVarMomentsAccIncremental{Tt, Tl, Tarray}(totals, ctrd_sums, order, ns, lrange, ldim, _totals, _ctrd_sums, _sums)
+end
+
+struct MultiVarMomentsAccIncremental{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray} <: AbstractMultivariateMomentsAcc
     totals::Tarray
     SCPs::Tarray  # sums of centered products
     α::Matrix{Int}  # order vectors (vector rows)
@@ -78,7 +106,7 @@ struct MultiVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     _sums::Tarray
 end
 
-function MultiVarMomentsAcc{Tt, Tl, Tarray}(order::Union{Int, AbstractVector{Int}, AbstractMatrix{Int}}, ns::Integer, lrange::Integer, ldim::Integer) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+function MultiVarMomentsAccIncremental{Tt, Tl, Tarray}(order::Union{Int, AbstractVector{Int}, AbstractMatrix{Int}}, ns::Integer, lrange::Integer, ldim::Integer) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
     if typeof(order) == Int
         α = fill!(Tarray{Int, 2}(undef, 1, ns), order)  # the same order is calculated for each sample position 
     elseif typeof(order) <: AbstractVector{Int}
@@ -94,7 +122,7 @@ function MultiVarMomentsAcc{Tt, Tl, Tarray}(order::Union{Int, AbstractVector{Int
     _totals = similar(totals)
     _SCPs = similar(SCPs)
     _sums = Tarray{Tt, 3}(undef, ldim, lrange, ns)
-    MultiVarMomentsAcc{Tt, Tl, Tarray}(totals, SCPs, α, ns, lrange, ldim, _totals, _SCPs, _sums)
+    MultiVarMomentsAccIncremental{Tt, Tl, Tarray}(totals, SCPs, α, ns, lrange, ldim, _totals, _SCPs, _sums)
 end
 
 function label_wise_sum_ak_transposed!(traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
@@ -384,7 +412,7 @@ function centered_sum_kern_ak!(SCPs::AbstractArray{Tt, 4}, traces::AbstractVecOr
     end
 end
 
-function centered_sum_update!(acc::MultiVarMomentsAcc{Tt, Tl, Ta}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+function centered_sum_update!(acc::MultiVarMomentsAccIncremental{Tt, Tl, Ta}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     fill!(acc._sums, 0)
     fill!(acc._totals, 0)
     fill!(acc._SCPs, 0)
