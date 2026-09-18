@@ -35,12 +35,14 @@ struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray} <: Ab
     ns::UInt
     lrange::UInt
     ldim::UInt
+    sums::Ta
 end
 
 function UniVarMomentsAcc{Tt, Tl, Ta}(order, ns, lrange, ldim) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     totals = fill!(Ta{UInt32, 2}(undef, ldim, lrange), 0)
     ctrd_sums = fill!(Ta{Tt, 4}(undef, ldim, lrange, order, ns), 0)
-    UniVarMomentsAcc{Tt, Tl, Ta}(totals, ctrd_sums, order, ns, lrange, ldim)
+    sums = fill!(Ta{Tt, 3}(undef, ldim, lrange, ns), 0)
+    UniVarMomentsAcc{Tt, Tl, Ta}(totals, ctrd_sums, order, ns, lrange, ldim, sums)
 end
 
 
@@ -247,7 +249,24 @@ function centered_sum_update_pass_1!(acc::UniVarMomentsAccIncremental{Tt, Tl, Ta
     return
 end
 
+function centered_sum_update_pass_1!(acc::UniVarMomentsAcc{Tt, Tl, Ta}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+    @boundscheck begin
+        checkbounds(acc.sums, acc.ldim, acc.lrange, size(traces, 2))
+        checkbounds(acc.ctrd_sums, acc.ldim, acc.lrange, acc.order, size(traces, 2))
+        checkbounds(labels, size(traces, 1), acc.ldim)
+    end
+    
+    centered_sum_update_pass_1!(acc.sums, acc.totals, traces, labels)
+
+    return
+end
+
 # Second pass in two pass approach
+function centered_sum_update_pass_2!(ctrd_sums::AbstractArray{Tt}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+    centered_sum_kern_ak!(ctrd_sums, traces, labels)
+    return
+end
+
 function centered_sum_update_pass_2!(acc::UniVarMomentsAccIncremental{Tt, Tl, Ta}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     @boundscheck begin
         checkbounds(acc._sums, acc.ldim, acc.lrange, size(traces, 2))
@@ -267,6 +286,7 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAccIncremental{Tt, Tl, Ta
         @inbounds @views acc.totals[init_ls] .= acc._totals[init_ls]
     end
     if any(update_ls)
+        @warn "Centered sum estimation merging is an experimental feature and introduces significant error (up to 500% in some tests). Do not use if accuracy is important"
         for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
             @inbounds merge_from_ak!(view(acc.ctrd_sums, l, :, :), view(acc.totals, l), view(acc._ctrd_sums, l, :, :), view(acc._totals, l))
         end
@@ -276,13 +296,22 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAccIncremental{Tt, Tl, Ta
     return
 end
 
-function centered_sum_update_pass_2!(ctrd_sums::AbstractArray{Tt}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
-    centered_sum_kern_ak!(ctrd_sums, traces, labels)
+function centered_sum_update_pass_2!(acc::UniVarMomentsAcc{Tt, Tl, Ta}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+    @boundscheck begin
+        checkbounds(acc.sums, acc.ldim, acc.lrange, size(traces, 2))
+        checkbounds(acc.ctrd_sums, acc.ldim, acc.lrange, acc.order, size(traces, 2))
+        checkbounds(labels, size(traces, 1), acc.ldim)
+    end
+
+    @. acc.ctrd_sums[:, :, 1, :] = acc.sums / acc.totals
+
+    centered_sum_kern_ak!(acc.ctrd_sums, traces, labels)
+
     return
 end
 
 
-function fit_moments!(acc::AbstractUnivariateMomentsAcc{Tt, Tl, Ta}, traces::Ta, labels::Ta) where {Tt, Tl, Ta}
+function fit_moments!(acc::AbstractUnivariateMomentsAcc, traces, labels)
     centered_sum_update_pass_1!(acc, traces, labels)
     centered_sum_update_pass_2!(acc, traces, labels)
 end
@@ -325,70 +354,95 @@ end
 
 # TODO: This seems to be consistently innaccurate, not due to floating point precision issues. I should
 # figure out why that is.
-function merge_from_ak!(CS_old::AbstractArray{Tt, 2}, total_old::AbstractArray{UInt32, 0}, CS_new::AbstractArray{Tt, 2}, total_new::AbstractArray{UInt32, 0}) where { Tt<:AbstractFloat }
+function merge_from_ak!(CS1::AbstractArray{Tt, 2}, n1::AbstractArray{UInt32, 0}, CS2::AbstractArray{Tt, 2}, n2::AbstractArray{UInt32, 0}) where { Tt<:AbstractFloat }
     @boundscheck begin
-        checkbounds(CS_new, size(CS_old)...)
-        checkbounds(total_new, size(total_old)...)
+        checkbounds(CS2, size(CS1)...)
+        checkbounds(n2, size(n1)...)
     end
     
-    order = size(CS_old, 1)
+    order = size(CS1, 1)
+    n1 = n1[1]
+    n2 = n2[1]
+    n = n1 + n2
 
-    @inbounds AK.foraxes(CS_old, 2) do j  # most allocations here 
-        δ = CS_new[1, j] - CS_old[1, j]
-        total_result = total_old[1] + total_new[1]
+    @inbounds AK.foraxes(CS1, 2) do j  # most allocations here 
+        δ_21 = CS2[1, j] - CS1[1, j]
+        
+        for p in order:-1:2  # p = order to update
+            CS1[p, j] += CS2[p, j]
 
-        for p in order:-1:2
-            CS_old[p, j] += CS_new[p, j]
-
-            # This loop seems to be where the error is coming from. orders 1 and 2 are accurate but 3 is where extreme error starts happening
-            # Error also seems to be worst at orders 3, 5, 7, ...
-            # At orders 3, 5, 7, ..., the error appears to be more data dependent than the subtle error at even orders
-            # Error seems to decrease on average as order rises beyond 3.
-            M_tmp = 0
-            # for k in p-2:-1:1
+            # V still fucked up
+            M_tmp = 0.0
             for k in 1:p-2
-                k_choose_p = binomial(Int32(p), Int32(k))  # explicit Int32 cast avoids unnecessary use of arbitrary precision arithmetic 
-                tmp1 = CS_old[p-k, j] * ((-total_new[1]/total_result[1])^k)
-                tmp2 = CS_new[p-k, j] * ((total_old[1]/total_result[1])^k)
+                pck = binomial(Int(p), Int(k))  # explicit Int32 cast avoids unnecessary use of arbitrary precision arithmetic
+                tmp1 = CS1[p-k, j] * ((-n2/n)^k)
+                tmp2 = CS2[p-k, j] * ((n1/n)^k)
                 tmp3 = tmp1 + tmp2
-                M_tmp += ((δ^k) * k_choose_p) * tmp3
+                M_tmp += ((δ_21^k) * pck) * tmp3
             end
-            CS_old[p, j] += M_tmp
+            CS1[p, j] += M_tmp
+
+            if (M_tmp >= 100) && (j == 1)
+                @error "Error 1: M_tmp = $(M_tmp)\tδ_21=$(δ_21)\tp=$(p)"
+            end
 
             # with batches of size 10000, this section is stable with float64 up to at least order 16 within 5 decimal places
-            tmp = ((1/total_new[1])^(p-1)) - ((-1/total_old[1])^(p-1))  # this is not how its shown in the paper, but is how scalib implements it.
-            # ^ This improves numerical stability at orders > 4 by avoiding division of 1 by total_new[1]^(p-1), which is quite large at p>4
-            tmp *= (((total_old[1] * total_new[1])/total_result[1]) * δ)^p
-            CS_old[p, j] += tmp
+            tmp = (((1/n2)^(p-1)) - ((-1/n1)^(p-1))) * ((((n1 * n2)/n) * δ_21)^p)  # this is not how its shown in the paper, but is how scalib implements it.
+            # ^ This improves numerical stability at orders > 4 by avoiding division of 1 by n2^(p-1), which is quite large at p>4
+
+            # tmp = (n1*((-n2/n)*δ_21)^p) + (n2*((n1/n)*δ_21)^p)
+            # if !(tmp ≈ (((1/n2)^(p-1)) - ((-1/n1)^(p-1))) * (((n1 * n2)/n) * δ_21)^p) && (j == 1)
+            #     @error "Error 1: $((((1/n2)^(p-1)) - ((-1/n1)^(p-1))) * (((n1 * n2)/n) * δ_21)^p) vs $(tmp)\tδ_21=$(δ_21)\tp=$(p)"
+            # end
+            
+            CS1[p, j] += tmp
         end
 
-        CS_old[1, j] += (δ * (total_new[1]/total_result[1]))  # update mean seperately
+        CS1[1, j] += (δ_21 * (n2/n))  # update mean seperately
     end
     
     return nothing
 end
 
-function centered_moment(m::UniVarMomentsAccIncremental, d::Int)
+function raw_moments(m::AbstractUnivariateMomentsAcc, d::Int)
+    @assert d >= 1 "cannot compute raw moment of order < 1 from MomentsAcc struct"
+
     if d == 1
-        @views CM_d = m.ctrd_sums[:, :, 1, :]
-    else 
-        @views CM_d = m.ctrd_sums[:, :, d, :] ./ m.totals
+        M_d = m.ctrd_sums[:, :, 1, :]
+    else
+        @error "cannot compute raw moment of order > 1 from MomentsAcc struct"
     end
+
+    return M_d
+end
+
+function centeral_moments(m::AbstractUnivariateMomentsAcc, d::Int)
+    @assert d >= 2 "cannot compute centered moment of order < 2 from MomentsAcc struct"
+
+    CM_d = @view(m.ctrd_sums[:, :, d, :]) ./ m.totals
     return CM_d
 end
 
-function get_mean_and_var(m::UniVarMomentsAccIncremental, d::Int)
+function standardized_moments(m::AbstractUnivariateMomentsAcc, d::Int)
+    @assert d >= 2 "cannot comute standardized moment of order < 2 from MomentsAcc struct"
+
+    SM_d = centeral_moments(m, d) ./ (centeral_moments(m, 2) .^ (d / 2))
+
+    return SM_d
+end
+
+function get_mean_and_var(m::AbstractUnivariateMomentsAcc, d::Int)
     if d == 1
-        @inbounds μ = @view m.ctrd_sums[:, :, 1, :]
-        @inbounds σ2 = m.ctrd_sums[:, :, 2, :] ./ m.totals
+        @inbounds μ = raw_moments(m, 1)
+        @inbounds σ2 = centeral_moments(m, 2)
         return μ, σ2
     elseif d == 2
-        @inbounds μ = m.ctrd_sums[:, :, 2, :] ./ m.totals
-        @inbounds σ2 = m.ctrd_sums[:, :, 4, :] ./ m.totals
+        @inbounds μ = centeral_moments(m, 2)
+        @inbounds σ2 = centeral_moments(m, 4) .- (μ.^2)
         return μ, σ2
     elseif d > 2
-        @inbounds μ = (m.ctrd_sums[:, :, d, :] ./ m.totals) ./ ((m.ctrd_sums[:, :, 2, :] ./ m.totals).^(d/2))
-        @inbounds σ2 = ((m.ctrd_sums[:, :, 2*d, :] ./ m.totals) .- ((m.ctrd_sums[:, :, d, :] ./ m.totals).^2)) ./ ((m.ctrd_sums[:, :, 2, :] ./ m.totals).^d)
+        @inbounds μ = standardized_moments(m, d)
+        @inbounds σ2 = (centeral_moments(m, 2*d) .- (centeral_moments(m, d).^2)) ./ (centeral_moments(m, 2).^d)
         return μ, σ2
     end
 end
