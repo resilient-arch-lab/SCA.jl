@@ -23,48 +23,50 @@ import AcceleratedKernels as AK
 using Base: convert
 using StaticArrays
 
-abstract type AbstractMomentsAcc end
-abstract type AbstractUnivariateMomentsAcc <: AbstractMomentsAcc end
-abstract type AbstractMultivariateMomentsAcc <: AbstractMomentsAcc end
+abstract type AbstractMomentsAcc{Tt, Tl, Ta} end
+abstract type AbstractUnivariateMomentsAcc{Tt, Tl, Ta} <: AbstractMomentsAcc{Tt, Tl, Ta} end
+abstract type AbstractMultivariateMomentsAcc{Tt, Tl, Ta} <: AbstractMomentsAcc{Tt, Tl, Ta} end
 
-struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray} <: AbstractUnivariateMomentsAcc
-    totals::Tarray
-    ctrd_sums::Tarray
+
+struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray} <: AbstractUnivariateMomentsAcc{Tt, Tl, Ta}
+    totals::Ta
+    ctrd_sums::Ta
     order::UInt
     ns::UInt
     lrange::UInt
     ldim::UInt
 end
 
-function UniVarMomentsAcc{Tt, Tl, Tarray}(order, ns, lrange, ldim) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
-    totals = fill!(Tarray{UInt32, 2}(undef, ldim, lrange), 0)
-    ctrd_sums = fill!(Tarray{Tt, 4}(undef, ldim, lrange, order, ns), 0)
-    UniVarMomentsAcc{Tt, Tl, Tarray}(totals, ctrd_sums, order, ns, lrange, ldim)
+function UniVarMomentsAcc{Tt, Tl, Ta}(order, ns, lrange, ldim) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+    totals = fill!(Ta{UInt32, 2}(undef, ldim, lrange), 0)
+    ctrd_sums = fill!(Ta{Tt, 4}(undef, ldim, lrange, order, ns), 0)
+    UniVarMomentsAcc{Tt, Tl, Ta}(totals, ctrd_sums, order, ns, lrange, ldim)
 end
 
-struct UniVarMomentsAccIncremental{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray} <: AbstractUnivariateMomentsAcc
-    totals::Tarray
-    ctrd_sums::Tarray
+
+struct UniVarMomentsAccIncremental{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray} <: AbstractUnivariateMomentsAcc{Tt, Tl, Ta}
+    totals::Ta
+    ctrd_sums::Ta
     order::UInt
     ns::UInt
     lrange::UInt
     ldim::UInt
-    _totals::Tarray
-    _ctrd_sums::Tarray
-    _sums::Tarray
+    _totals::Ta
+    _ctrd_sums::Ta
+    _sums::Ta
 end
 
-function UniVarMomentsAccIncremental{Tt, Tl, Tarray}(order, ns, lrange, ldim) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray} 
-    totals = fill!(Tarray{UInt32, 2}(undef, ldim, lrange), 0)
-    ctrd_sums = fill!(Tarray{Tt, 4}(undef, ldim, lrange, order, ns), 0)
+function UniVarMomentsAccIncremental{Tt, Tl, Ta}(order, ns, lrange, ldim) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray} 
+    totals = fill!(Ta{UInt32, 2}(undef, ldim, lrange), 0)
+    ctrd_sums = fill!(Ta{Tt, 4}(undef, ldim, lrange, order, ns), 0)
     _totals = fill!(similar(totals), 0)
     _ctrd_sums = fill!(similar(ctrd_sums), 0)
-    _sums = fill!(Tarray{Tt, 3}(undef, ldim, lrange, ns), 0)
-    UniVarMomentsAccIncremental{Tt, Tl, Tarray}(totals, ctrd_sums, order, ns, lrange, ldim, _totals, _ctrd_sums, _sums)
+    _sums = fill!(Ta{Tt, 3}(undef, ldim, lrange, ns), 0)
+    UniVarMomentsAccIncremental{Tt, Tl, Ta}(totals, ctrd_sums, order, ns, lrange, ldim, _totals, _ctrd_sums, _sums)
 end
 
 # initialize from dataset shape and labels
-function UniVarMomentsAccIncremental{Tt, Tl, Tarray}(order, a::Tarray, labels::Tarray) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+function UniVarMomentsAccIncremental{Tt, Tl, Ta}(order, a::Ta, labels::Ta) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     @assert typeof(a) <: AbstractVecOrMat "a expected to be a Vector or Matrix, got $(typeof(a))"
     @assert typeof(labels) <: AbstractVecOrMat "labels expected to be a Vector or Matrix, got $(typeof(labels))"
     
@@ -72,16 +74,16 @@ function UniVarMomentsAccIncremental{Tt, Tl, Tarray}(order, a::Tarray, labels::T
     ldim = size(labels, 2)
     lrange = length(unique(labels))
 
-    totals = fill!(Tarray{UInt32, 2}(undef, ldim, lrange), 0)
-    ctrd_sums = fill!(Tarray{Tt, 4}(undef, ldim, lrange, order, ns), 0)
+    totals = fill!(Ta{UInt32, 2}(undef, ldim, lrange), 0)
+    ctrd_sums = fill!(Ta{Tt, 4}(undef, ldim, lrange, order, ns), 0)
     _totals = fill!(similar(totals), 0)
     _ctrd_sums = fill!(similar(ctrd_sums), 0)
-    _sums = fill!(Tarray{Tt, 3}(undef, ldim, lrange, ns), 0)
-    UniVarMomentsAccIncremental{Tt, Tl, Tarray}(totals, ctrd_sums, order, ns, lrange, ldim, _totals, _ctrd_sums, _sums)
+    _sums = fill!(Ta{Tt, 3}(undef, ldim, lrange, ns), 0)
+    UniVarMomentsAccIncremental{Tt, Tl, Ta}(totals, ctrd_sums, order, ns, lrange, ldim, _totals, _ctrd_sums, _sums)
 end
 
 # initialize from non-incremental struct
-function UniVarMomentsAccIncremental{Tt, Tl, Tarray}(acc::UniVarMomentsAcc) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+function UniVarMomentsAccIncremental{Tt, Tl, Ta}(acc::UniVarMomentsAcc) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     ns = acc.ns
     ldim = acc.ldim
     lrange = acc.lrange
@@ -90,25 +92,26 @@ function UniVarMomentsAccIncremental{Tt, Tl, Tarray}(acc::UniVarMomentsAcc) wher
     ctrd_sums = acc.ctrd_sums
     _totals = fill!(similar(totals), 0)
     _ctrd_sums = fill!(similar(ctrd_sums), 0)
-    _sums = fill!(Tarray{Tt, 3}(undef, ldim, lrange, ns), 0)
-    UniVarMomentsAccIncremental{Tt, Tl, Tarray}(totals, ctrd_sums, order, ns, lrange, ldim, _totals, _ctrd_sums, _sums)
+    _sums = fill!(Ta{Tt, 3}(undef, ldim, lrange, ns), 0)
+    UniVarMomentsAccIncremental{Tt, Tl, Ta}(totals, ctrd_sums, order, ns, lrange, ldim, _totals, _ctrd_sums, _sums)
 end
 
-struct MultiVarMomentsAccIncremental{Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray} <: AbstractMultivariateMomentsAcc
-    totals::Tarray
-    SCPs::Tarray  # sums of centered products
+
+struct MultiVarMomentsAccIncremental{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray} <: AbstractMultivariateMomentsAcc{Tt, Tl, Ta}
+    totals::Ta
+    SCPs::Ta  # sums of centered products
     α::Matrix{Int}  # order vectors (vector rows)
     ns::UInt  # number of samples per trace (and therefore the variateness of sums of centered prods)
     lrange::UInt
     ldim::UInt
-    _totals::Tarray
-    _SCPs::Tarray
-    _sums::Tarray
+    _totals::Ta
+    _SCPs::Ta
+    _sums::Ta
 end
 
-function MultiVarMomentsAccIncremental{Tt, Tl, Tarray}(order::Union{Int, AbstractVector{Int}, AbstractMatrix{Int}}, ns::Integer, lrange::Integer, ldim::Integer) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+function MultiVarMomentsAccIncremental{Tt, Tl, Ta}(order::Union{Int, AbstractVector{Int}, AbstractMatrix{Int}}, ns::Integer, lrange::Integer, ldim::Integer) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     if typeof(order) == Int
-        α = fill!(Tarray{Int, 2}(undef, 1, ns), order)  # the same order is calculated for each sample position 
+        α = fill!(Ta{Int, 2}(undef, 1, ns), order)  # the same order is calculated for each sample position 
     elseif typeof(order) <: AbstractVector{Int}
         α = reshape(order, 1, ns)
     else typeof(order) <: AbstractMatrix{Int}
@@ -116,13 +119,27 @@ function MultiVarMomentsAccIncremental{Tt, Tl, Tarray}(order::Union{Int, Abstrac
         α = order
     end
     
-    totals = fill!(Tarray{UInt32, 2}(undef, ldim, lrange), 0)
-    SCPs = fill!(Tarray{Tt, 4}(undef, ldim, lrange, size(α, 1), 1), 0)
+    totals = fill!(Ta{UInt32, 2}(undef, ldim, lrange), 0)
+    SCPs = fill!(Ta{Tt, 4}(undef, ldim, lrange, size(α, 1), 1), 0)
 
     _totals = similar(totals)
     _SCPs = similar(SCPs)
-    _sums = Tarray{Tt, 3}(undef, ldim, lrange, ns)
-    MultiVarMomentsAccIncremental{Tt, Tl, Tarray}(totals, SCPs, α, ns, lrange, ldim, _totals, _SCPs, _sums)
+    _sums = Ta{Tt, 3}(undef, ldim, lrange, ns)
+    MultiVarMomentsAccIncremental{Tt, Tl, Ta}(totals, SCPs, α, ns, lrange, ldim, _totals, _SCPs, _sums)
+end
+
+
+# simple, sequential label-wise sum op for cpu
+@inline function label_wise_sum!(traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix) where {Tt<:AbstractFloat, Tl<:Integer}
+    for i in axes(traces, 1)
+        for l in axes(labels, 2)
+            l_i = convert(Int, labels[i, l])+1
+            for j in axes(traces, 2)
+                sums[l, l_i, j] += traces[i, j]
+            end
+            totals[l, l_i] += 1
+        end
+    end
 end
 
 function label_wise_sum_ak_transposed!(traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
@@ -139,7 +156,6 @@ function label_wise_sum_ak_transposed!(traces::AbstractVecOrMat{Tt}, labels::Abs
     end
 end
 
-# For multi-element labels
 function label_wise_sum_ak!(traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     @inbounds AK.foraxes(traces, 1) do i
         for l in axes(labels, 2)
@@ -152,15 +168,22 @@ function label_wise_sum_ak!(traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrM
     end
 end
 
-# simple, sequential label-wise sum op for cpu
-@inline function label_wise_sum!(traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix) where {Tt<:AbstractFloat, Tl<:Integer}
+
+# simple, sequential centered sum update op for cpu
+@inline function centered_sum!(ctrd_sums::AbstractArray{Tt, 4}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+    order = size(ctrd_sums, 3)
+    
     for i in axes(traces, 1)
         for l in axes(labels, 2)
             l_i = convert(Int, labels[i, l])+1
             for j in axes(traces, 2)
-                sums[l, l_i, j] += traces[i, j]
+                t_update = traces[i, j] - ctrd_sums[l, l_i, 1, j]
+                pow = t_update
+                for d in 2:order
+                    pow *= t_update
+                    ctrd_sums[l, l_i, d, j] += pow
+                end
             end
-            totals[l, l_i] += 1
         end
     end
 end
@@ -202,49 +225,29 @@ function centered_sum_kern_ak_atomic!(moments::AbstractArray{Tt, 4}, traces::Abs
     end
 end
 
-# simple, sequential centered sum update op for cpu
-@inline function centered_sum!(ctrd_sums::AbstractArray{Tt, 4}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
-    order = size(ctrd_sums, 3)
-    
-    for i in axes(traces, 1)
-        for l in axes(labels, 2)
-            l_i = convert(Int, labels[i, l])+1
-            for j in axes(traces, 2)
-                t_update = traces[i, j] - ctrd_sums[l, l_i, 1, j]
-                pow = t_update
-                for d in 2:order
-                    pow *= t_update
-                    ctrd_sums[l, l_i, d, j] += pow
-                end
-            end
-        end
-    end
-end
 
 # First pass in two pass approach
-function centered_sum_update_pass_1!(acc::UniVarMomentsAccIncremental{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+function centered_sum_update_pass_1!(sums::AbstractArray{Tt}, totals::AbstractArray{UInt32}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+    label_wise_sum_ak_transposed!(traces, labels, sums, totals)
+    return
+end
+
+function centered_sum_update_pass_1!(acc::UniVarMomentsAccIncremental{Tt, Tl, Ta}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     @boundscheck begin
         checkbounds(acc._sums, acc.ldim, acc.lrange, size(traces, 2))
         checkbounds(acc._ctrd_sums, acc.ldim, acc.lrange, acc.order, size(traces, 2))
         checkbounds(labels, size(traces, 1), acc.ldim)
     end
     
-    fill!(acc._ctrd_sums, 0)
-    fill!(acc._sums, 0)
-    fill!(acc._totals, 0)
+    fill!.([acc._ctrd_sums, acc._sums, acc._totals], 0)
 
-    label_wise_sum_ak_transposed!(traces, labels, acc._sums, acc._totals)
+    centered_sum_update_pass_1!(acc._sums, acc._totals, traces, labels)
 
-    return
-end
-
-function centered_sum_update_pass_1!(sums::AbstractArray{Tt}, totals::AbstractArray{UInt32}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
-    label_wise_sum_ak_transposed!(traces, labels, sums, totals)
     return
 end
 
 # Second pass in two pass approach
-function centered_sum_update_pass_2!(acc::UniVarMomentsAccIncremental{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+function centered_sum_update_pass_2!(acc::UniVarMomentsAccIncremental{Tt, Tl, Ta}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     @boundscheck begin
         checkbounds(acc._sums, acc.ldim, acc.lrange, size(traces, 2))
         checkbounds(acc._ctrd_sums, acc.ldim, acc.lrange, acc.order, size(traces, 2))
@@ -277,7 +280,8 @@ function centered_sum_update_pass_2!(ctrd_sums::AbstractArray{Tt}, traces::Abstr
     return
 end
 
-function fit_moments!(acc::UniVarMomentsAccIncremental{Tt, Tl, Tarray}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Tarray<:AbstractArray}
+
+function fit_moments!(acc::AbstractUnivariateMomentsAcc{Tt, Tl, Ta}, traces::Ta, labels::Ta)
     centered_sum_update_pass_1!(acc, traces, labels)
     centered_sum_update_pass_2!(acc, traces, labels)
 end
@@ -389,7 +393,7 @@ function get_mean_and_var(m::UniVarMomentsAccIncremental, d::Int)
 end
 
 
-# MULTIVARIATE STUFF
+# Multivariate methods
 
 function centered_sum_kern_ak!(SCPs::AbstractArray{Tt, 4}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, order::AbstractMatrix{Int}, means::AbstractArray{Tt, 3}) where {Tt<:AbstractFloat, Tl<:Integer}
     @boundscheck begin
