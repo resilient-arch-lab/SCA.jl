@@ -1,5 +1,5 @@
 """
-Signal to Noise Ratio (SNR)
+Signal to Noise Ratio (SNR) estimation with method of moments
 """
 
 module SNR

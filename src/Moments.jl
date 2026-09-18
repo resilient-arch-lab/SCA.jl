@@ -130,7 +130,7 @@ end
 
 
 # simple, sequential label-wise sum op for cpu
-@inline function label_wise_sum!(traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix) where {Tt<:AbstractFloat, Tl<:Integer}
+@inline function label_wise_sum!(traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractArray) where {Tt<:AbstractFloat, Tl<:Integer}
     for i in axes(traces, 1)
         for l in axes(labels, 2)
             l_i = convert(Int, labels[i, l])+1
@@ -142,7 +142,8 @@ end
     end
 end
 
-function label_wise_sum_ak_transposed!(traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
+# no method matching label_wise_sum_ak_transposed!(::Matrix{Float64}, ::Matrix{UInt8}, ::Array{Float64, 3}, ::Array{UInt32, 3})
+function label_wise_sum_ak_transposed!(traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractArray{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     @inbounds AK.foraxes(traces, 2) do j
         for i in axes(traces, 1)
             for l in axes(labels, 2)
@@ -156,7 +157,7 @@ function label_wise_sum_ak_transposed!(traces::AbstractVecOrMat{Tt}, labels::Abs
     end
 end
 
-function label_wise_sum_ak!(traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractMatrix{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
+function label_wise_sum_ak!(traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractArray{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
     @inbounds AK.foraxes(traces, 1) do i
         for l in axes(labels, 2)
             l_i = convert(Int32, labels[i, l]+1)
@@ -281,7 +282,7 @@ function centered_sum_update_pass_2!(ctrd_sums::AbstractArray{Tt}, traces::Abstr
 end
 
 
-function fit_moments!(acc::AbstractUnivariateMomentsAcc{Tt, Tl, Ta}, traces::Ta, labels::Ta)
+function fit_moments!(acc::AbstractUnivariateMomentsAcc{Tt, Tl, Ta}, traces::Ta, labels::Ta) where {Tt, Tl, Ta}
     centered_sum_update_pass_1!(acc, traces, labels)
     centered_sum_update_pass_2!(acc, traces, labels)
 end
