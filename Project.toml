@@ -22,10 +22,12 @@ StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 Dagger = "d58978e5-989f-55fb-8d15-ea34adc7bf54"
 DiskArrays = "3c3547ce-8d99-4f5e-a174-61eb10b00ae3"
 GPUArrays = "0c68f7d7-f131-5f86-a1c3-88cf8149b2d7"
+Zarr = "0a941bbe-ad1d-11e8-39d9-ab76183a1d99"
 
 [extensions]
-SCADaggerExt = "Dagger"
 SCADaggerDiskArraysExt = ["Dagger", "DiskArrays"]
+SCADaggerExt = "Dagger"
+SCADaggerZarrDiskArraysExt = ["Dagger", "Zarr", "DiskArrays"]
 SCAGPUArraysExt = "GPUArrays"
 
 [compat]
@@ -52,6 +54,7 @@ Dagger = "d58978e5-989f-55fb-8d15-ea34adc7bf54"
 DiskArrays = "3c3547ce-8d99-4f5e-a174-61eb10b00ae3"
 GPUArrays = "0c68f7d7-f131-5f86-a1c3-88cf8149b2d7"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+Zarr = "0a941bbe-ad1d-11e8-39d9-ab76183a1d99"
 
 [targets]
 test = ["Test"]

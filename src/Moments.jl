@@ -45,6 +45,16 @@ function UniVarMomentsAcc{Tt, Tl, Ta}(order, ns, lrange, ldim) where {Tt<:Abstra
     UniVarMomentsAcc{Tt, Tl, Ta}(totals, ctrd_sums, order, ns, lrange, ldim, sums)
 end
 
+function UniVarMomentsAcc{Tt, Tl, Ta}(order, a::Ta, labels::Ta) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+    @assert typeof(a) <: AbstractVecOrMat "a expected to be a Vector or Matrix, got $(typeof(a))"
+    @assert typeof(labels) <: AbstractVecOrMat "labels expected to be a Vector or Matrix, got $(typeof(labels))"
+    
+    ns = size(a, 2)
+    ldim = size(labels, 2)
+    lrange = length(unique(labels))
+    UniVarMomentsAcc{Tt, Tl, Ta}(order, ns, lrange, ldim)
+end
+
 
 struct UniVarMomentsAccIncremental{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray} <: AbstractUnivariateMomentsAcc{Tt, Tl, Ta}
     totals::Ta
@@ -382,9 +392,9 @@ function merge_from_ak!(CS1::AbstractArray{Tt, 2}, n1::AbstractArray{UInt32, 0},
             end
             CS1[p, j] += M_tmp
 
-            if (M_tmp >= 100) && (j == 1)
-                @error "Error 1: M_tmp = $(M_tmp)\tδ_21=$(δ_21)\tp=$(p)"
-            end
+            # if (M_tmp >= 100) && (j == 1)
+            #     @error "Error 1: M_tmp = $(M_tmp)\tδ_21=$(δ_21)\tp=$(p)"
+            # end
 
             # with batches of size 10000, this section is stable with float64 up to at least order 16 within 5 decimal places
             tmp = (((1/n2)^(p-1)) - ((-1/n1)^(p-1))) * ((((n1 * n2)/n) * δ_21)^p)  # this is not how its shown in the paper, but is how scalib implements it.

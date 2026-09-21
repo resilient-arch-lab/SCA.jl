@@ -1,4 +1,4 @@
-module SCADiskArraysExt
+module SCADaggerDiskArraysExt
 using DiskArrays
 using Dagger
 
