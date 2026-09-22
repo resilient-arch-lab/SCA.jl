@@ -104,6 +104,7 @@ Distributed moment estimation with intermediate value reduction between workers.
 
 """
 function Moments.centered_sum_update(a::DMatrix{Tt}, labels::DMatrix{Tl}, lrange::Int, order::Int, ::Val{:reduction})::DArray{Tt, 4} where {Tt<:AbstractFloat, Tl<:Integer}
+    # TODO: do tree-reduction between DArray intermedaites instaed of naive reduction
     @boundscheck begin
         checkbounds(labels, size(a, 1), 1)
         checkbounds(a, size(labels, 1), 1)
@@ -137,6 +138,9 @@ function Moments.centered_sum_update(a::DMatrix{Tt}, labels::DMatrix{Tl}, lrange
             Dagger.@spawn sum_reduction_helper!(InOut(totals[1].chunks[1, 1]), In(totals[i].chunks[1, 1]))
         end
         Dagger.@spawn mean_helper(Out(ctrd_sums[1].chunks[1, 1, 1, 1]), In(raw_sums[1].chunks[1, 1, 1]), In(totals[1].chunks[1, 1]))
+        for i in 2:size(labels.chunks, 1)
+            Dagger.@spawn copyto!(Out(ctrd_sums[i].chunks[1, 1, 1, 1]), In(ctrd_sums[1].chunks[1, 1, 1, 1]))
+        end
 
         # means are correct, other orders are not...
         # distributed pass 2
