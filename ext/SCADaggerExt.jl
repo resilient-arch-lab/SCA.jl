@@ -46,6 +46,7 @@ function cs_sum_reduction_helper!(a1::AbstractArray{T1, N}, a2::AbstractArray{T2
     @views a1[:, :, 2:end, :] .+= a2[:, :, 2:end, :]
 end
 
+# gives some kind of aliasing error from dagger
 function datadeps_bin_tree_reduce(op::Base.Callable, As::Vector{<:Dagger.DArray})
     to_reduce = Vector[]
     push!(to_reduce, As)
