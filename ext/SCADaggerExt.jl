@@ -46,6 +46,23 @@ function cs_sum_reduction_helper!(a1::AbstractArray{T1, N}, a2::AbstractArray{T2
     @views a1[:, :, 2:end, :] .+= a2[:, :, 2:end, :]
 end
 
+function datadeps_bin_tree_reduce(op::Base.Callable, As::Vector{<:Dagger.DArray})
+    to_reduce = Vector[]
+    push!(to_reduce, As)
+    while !isempty(to_reduce)
+        As = pop!(to_reduce)
+        n = length(As)
+        if n == 2
+            Dagger.@spawn Base.mapreducedim!(identity, op, InOut(As[1]), In(As[2]))
+        elseif n > 2
+            push!(to_reduce, [As[1], As[div(n,2)+1]])
+            push!(to_reduce, As[1:div(n,2)])
+            push!(to_reduce, As[div(n,2)+1:end])
+        end
+    end
+    return As[1]
+end
+
 """
 Distributed moment estimation with intermediate value communication.
 
@@ -121,9 +138,9 @@ function Moments.centered_sum_update(a::DMatrix{Tt}, labels::DMatrix{Tl}, lrange
 
     # allocate intermediate values for each chunk on i axis
     @debug "allocating intermediates"
-    raw_sums = [zeros(Blocks(size(labels, 2), lrange, size(a, 2)), Tt, size(labels, 2), lrange, size(a, 2); assignment=reshape([node, ], 1, 1, 1)) for node in a_procs]
-    totals = [zeros(Blocks(size(labels, 2), lrange), UInt32, size(labels, 2), lrange; assignment=reshape([node, ], 1, 1)) for node in a_procs]
-    ctrd_sums = [zeros(Blocks(size(labels, 2), lrange, order, size(a, 2)), Tt, size(labels, 2), lrange, order, size(a, 2); assignment=reshape([node, ], 1, 1, 1, 1)) for node in a_procs]
+    raw_sums = [zeros(Blocks(size(labels, 2), lrange, size(a, 2)), Tt, size(labels, 2), lrange, size(a, 2); assignment=reshape([node, ], 1, 1, 1)) for node in vec(a_procs)]
+    totals = [zeros(Blocks(size(labels, 2), lrange), UInt32, size(labels, 2), lrange; assignment=reshape([node, ], 1, 1)) for node in vec(a_procs)]
+    ctrd_sums = [zeros(Blocks(size(labels, 2), lrange, order, size(a, 2)), Tt, size(labels, 2), lrange, order, size(a, 2); assignment=reshape([node, ], 1, 1, 1, 1)) for node in vec(a_procs)]
     
     @debug "starting datadeps routine"
     Dagger.spawn_datadeps() do 
@@ -137,6 +154,8 @@ function Moments.centered_sum_update(a::DMatrix{Tt}, labels::DMatrix{Tl}, lrange
             Dagger.@spawn sum_reduction_helper!(InOut(raw_sums[1].chunks[1, 1, 1]), In(raw_sums[i].chunks[1, 1, 1]))
             Dagger.@spawn sum_reduction_helper!(InOut(totals[1].chunks[1, 1]), In(totals[i].chunks[1, 1]))
         end
+        # datadeps_bin_tree_reduce(sum_reduction_helper!, raw_sums)
+        # datadeps_bin_tree_reduce(sum_reduction_helper!, totals)
         Dagger.@spawn mean_helper(Out(ctrd_sums[1].chunks[1, 1, 1, 1]), In(raw_sums[1].chunks[1, 1, 1]), In(totals[1].chunks[1, 1]))
         for i in 2:size(labels.chunks, 1)
             Dagger.@spawn copyto!(Out(ctrd_sums[i].chunks[1, 1, 1, 1]), In(ctrd_sums[1].chunks[1, 1, 1, 1]))
