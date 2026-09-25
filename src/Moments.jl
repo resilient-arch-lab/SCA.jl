@@ -36,7 +36,7 @@ struct UniVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray} <: Ab
 end
 
 function UniVarMomentsAcc{Tt, Tl, Ta}(order, ns, lrange, ldim) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
-    totals = fill!(Ta{UInt32, 2}(undef, ldim, lrange), 0)
+    totals = fill!(Ta{Int32, 2}(undef, ldim, lrange), 0)
     ctrd_sums = fill!(Ta{Tt, 4}(undef, ldim, lrange, order, ns), 0)
     sums = fill!(Ta{Tt, 3}(undef, ldim, lrange, ns), 0)
     UniVarMomentsAcc{Tt, Tl, Ta}(totals, ctrd_sums, order, ns, lrange, ldim, sums)
@@ -66,7 +66,7 @@ struct UniVarMomentsAccIncremental{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractA
 end
 
 function UniVarMomentsAccIncremental{Tt, Tl, Ta}(order, ns, lrange, ldim) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray} 
-    totals = fill!(Ta{UInt32, 2}(undef, ldim, lrange), 0)
+    totals = fill!(Ta{Int32, 2}(undef, ldim, lrange), 0)
     ctrd_sums = fill!(Ta{Tt, 4}(undef, ldim, lrange, order, ns), 0)
     _totals = fill!(similar(totals), 0)
     _ctrd_sums = fill!(similar(ctrd_sums), 0)
@@ -83,7 +83,7 @@ function UniVarMomentsAccIncremental{Tt, Tl, Ta}(order, a::Ta, labels::Ta) where
     ldim = size(labels, 2)
     lrange = length(unique(labels))
 
-    totals = fill!(Ta{UInt32, 2}(undef, ldim, lrange), 0)
+    totals = fill!(Ta{Int32, 2}(undef, ldim, lrange), 0)
     ctrd_sums = fill!(Ta{Tt, 4}(undef, ldim, lrange, order, ns), 0)
     _totals = fill!(similar(totals), 0)
     _ctrd_sums = fill!(similar(ctrd_sums), 0)
@@ -126,7 +126,7 @@ function MultiVarMomentsAcc{Tt, Tl, Ta}(order::Union{Int, AbstractVector{Int}, A
         α = order
     end
     
-    totals = fill!(Ta{UInt32, 2}(undef, ldim, lrange), 0)
+    totals = fill!(Ta{Int32, 2}(undef, ldim, lrange), 0)
     SCPs = fill!(Ta{Tt, 4}(undef, ldim, lrange, size(α, 1), 1), 0)
 
     sums = Ta{Tt, 3}(undef, ldim, lrange, ns)
@@ -156,7 +156,7 @@ function MultiVarMomentsAccIncremental{Tt, Tl, Ta}(order::Union{Int, AbstractVec
         α = order
     end
     
-    totals = fill!(Ta{UInt32, 2}(undef, ldim, lrange), 0)
+    totals = fill!(Ta{Int32, 2}(undef, ldim, lrange), 0)
     SCPs = fill!(Ta{Tt, 4}(undef, ldim, lrange, size(α, 1), 1), 0)
 
     _totals = similar(totals)
@@ -179,8 +179,8 @@ end
     end
 end
 
-# no method matching label_wise_sum_ak_transposed!(::Matrix{Float64}, ::Matrix{UInt8}, ::Array{Float64, 3}, ::Array{UInt32, 3})
-function label_wise_sum_ak_transposed!(traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractArray{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
+# no method matching label_wise_sum_ak_transposed!(::Matrix{Float64}, ::Matrix{UInt8}, ::Array{Float64, 3}, ::Array{Int32, 3})
+function label_wise_sum_ak_transposed!(traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractArray{Int32}) where {Tt<:AbstractFloat, Tl<:Integer}
     @inbounds AK.foraxes(traces, 2) do j
         for i in axes(traces, 1)
             for l in axes(labels, 2)
@@ -194,7 +194,7 @@ function label_wise_sum_ak_transposed!(traces::AbstractVecOrMat{Tt}, labels::Abs
     end
 end
 
-function label_wise_sum_ak!(traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractArray{UInt32}) where {Tt<:AbstractFloat, Tl<:Integer}
+function label_wise_sum_ak!(traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractArray{Int32}) where {Tt<:AbstractFloat, Tl<:Integer}
     @inbounds AK.foraxes(traces, 1) do i
         for l in axes(labels, 2)
             l_i = convert(Int32, labels[i, l]+1)
@@ -265,7 +265,7 @@ end
 
 
 # First pass in two pass approach
-function centered_sum_update_pass_1!(sums::AbstractArray{Tt}, totals::AbstractArray{UInt32}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+function centered_sum_update_pass_1!(sums::AbstractArray{Tt}, totals::AbstractArray{Int32}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     label_wise_sum_ak_transposed!(traces, labels, sums, totals)
     return
 end
@@ -332,7 +332,7 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAccIncremental{Tt, Tl, Ta
         @inbounds @views acc.totals[init_ls] .= acc._totals[init_ls]
     end
     if any(update_ls)
-        @warn "Centered sum estimation merging is an experimental feature and introduces significant error (up to 500% in some tests). Do not use if accuracy is important"
+        # @warn "Centered sum estimation merging is an experimental feature and introduces significant error (up to 500% in some tests). Do not use if accuracy is important"
         for l in Array(findall(update_ls))  # cast labels-to-update to CPU mem for kernel execution loop
             @inbounds merge_from_ak!(view(acc.ctrd_sums, l, :, :), view(acc.totals, l), view(acc._ctrd_sums, l, :, :), view(acc._totals, l))
         end
@@ -411,9 +411,7 @@ function centered_sum_update(traces::Matrix{Tt}, labels::Matrix{Tl}, nl::Int, or
     return moments
 end
 
-# TODO: This seems to be consistently innaccurate, not due to floating point precision issues. I should
-# figure out why that is.
-function merge_from_ak!(CS1::AbstractArray{Tt, 2}, n1::AbstractArray{UInt32, 0}, CS2::AbstractArray{Tt, 2}, n2::AbstractArray{UInt32, 0}) where { Tt<:AbstractFloat }
+function merge_from_ak!(CS1::AbstractArray{Tt, 2}, n1::AbstractArray{Int32, 0}, CS2::AbstractArray{Tt, 2}, n2::AbstractArray{Int32, 0}) where { Tt<:AbstractFloat }
     @boundscheck begin
         checkbounds(CS2, size(CS1)...)
         checkbounds(n2, size(n1)...)
@@ -430,10 +428,9 @@ function merge_from_ak!(CS1::AbstractArray{Tt, 2}, n1::AbstractArray{UInt32, 0},
         for p in order:-1:2  # p = order to update
             CS1[p, j] += CS2[p, j]
 
-            # V still fucked up
             M_tmp = 0.0
             for k in 1:p-2
-                pck = binomial(Int(p), Int(k))  # explicit Int32 cast avoids unnecessary use of arbitrary precision arithmetic
+                pck = binomial(Int32(p), Int32(k))  # explicit Int32 cast avoids unnecessary use of arbitrary precision arithmetic
                 tmp1 = CS1[p-k, j] * ((-n2/n)^k)
                 tmp2 = CS2[p-k, j] * ((n1/n)^k)
                 tmp3 = tmp1 + tmp2
@@ -441,19 +438,10 @@ function merge_from_ak!(CS1::AbstractArray{Tt, 2}, n1::AbstractArray{UInt32, 0},
             end
             CS1[p, j] += M_tmp
 
-            # if (M_tmp >= 100) && (j == 1)
-            #     @error "Error 1: M_tmp = $(M_tmp)\tδ_21=$(δ_21)\tp=$(p)"
-            # end
-
             # with batches of size 10000, this section is stable with float64 up to at least order 16 within 5 decimal places
             tmp = (((1/n2)^(p-1)) - ((-1/n1)^(p-1))) * ((((n1 * n2)/n) * δ_21)^p)  # this is not how its shown in the paper, but is how scalib implements it.
             # ^ This improves numerical stability at orders > 4 by avoiding division of 1 by n2^(p-1), which is quite large at p>4
 
-            # tmp = (n1*((-n2/n)*δ_21)^p) + (n2*((n1/n)*δ_21)^p)
-            # if !(tmp ≈ (((1/n2)^(p-1)) - ((-1/n1)^(p-1))) * (((n1 * n2)/n) * δ_21)^p) && (j == 1)
-            #     @error "Error 1: $((((1/n2)^(p-1)) - ((-1/n1)^(p-1))) * (((n1 * n2)/n) * δ_21)^p) vs $(tmp)\tδ_21=$(δ_21)\tp=$(p)"
-            # end
-            
             CS1[p, j] += tmp
         end
 

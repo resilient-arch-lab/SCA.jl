@@ -100,7 +100,7 @@ end
     println("")
 end
 
-@testset "Centered products estimation satability test 2: RMS error vs. float length (no merging)" begin
+@testset "Centered products estimation satability test 2: % error vs. float length (no merging)" begin
     setprecision(BigFloat, 256)
     prec = precision(BigFloat)
     println("Ground truth float precision: $(prec)")
@@ -145,28 +145,37 @@ end
             results64 = cat(results64, m64.ctrd_sums, dims=5)
         end
 
-        # shuffle trace rows and labels 
+        # shuffle trace rows and labels
         perm = randperm(size(a32, 1))
         a32, l = SCA.TestUtils.permute_dataset_rows(a32, l, perm)
         a64, _ = SCA.TestUtils.permute_dataset_rows(a64, l, perm)
     end
 
     # calculate average RMS error
-    rms32 = sqrt.(mean((resultsref .- results32).^2, dims=5))
-    rms64 = sqrt.(mean((resultsref .- results64).^2, dims=5))
+    # rms32 = sqrt.(mean((resultsref .- results32).^2, dims=5))
+    # rms64 = sqrt.(mean((resultsref .- results64).^2, dims=5))
+
+    rel32 = abs.((results32 .- resultsref)) .* 100
+    rel64 = abs.((results64 .- resultsref)) .* 100
+
+    mean32 = vec(mean(rel32, dims=(1, 2, 4, 5)))'
+    max32 = vec(maximum(rel32, dims=(1, 2, 4, 5)))'
+    mean64 = vec(mean(rel64, dims=(1, 2, 4, 5)))'
+    max64 = vec(maximum(rel64, dims=(1, 2, 4, 5)))'
+
 
     println("32 bit report: ")
-    println("RMS error vs reference (averaged over sample positions and $(n) iterations):")
-    display(vec(mean(rms32, dims=(1, 2, 4)))')
-    println("Maximum RMS error: ")
-    display(vec(maximum(rms32, dims=(1, 2, 4)))')
+    println("% error vs reference (averaged over sample positions and $(n) iterations):")
+    display(mean32)
+    println("Maximum % error: ")
+    display(max32)
     println("")
     
     println("64 bit report: ")
-    println("RMS error vs reference (averaged over sample positions and $(n) iterations):")
-    display(vec(mean(rms64, dims=(1, 2, 4)))')
-    println("Maximum RMS error: ")
-    display(vec(maximum(rms64, dims=(1, 2, 4)))')
+    println("% error vs reference (averaged over sample positions and $(n) iterations):")
+    display(mean64)
+    println("Maximum % error: ")
+    display(max64)
     println("")
 end
 
@@ -175,13 +184,13 @@ end
     prec = precision(BigFloat)
     println("Ground truth float precision: $(prec)")
     
-    NL = 2
-    a32 = rand(Float32, 20000, 20)
+    NL = 1
+    a32 = rand(Float32, 40000, 20)
     a64 = Float64.(a32)
     a256 = big.(a64)
-    l = rand(UInt8, 20000, NL)
+    l = rand(UInt8, 40000, NL)
 
-    batch_settings = [1, 2, 4, 10]
+    batch_settings = [1, 2, 4, 8]
     order = 16
     
     ref_results = Dict{Int, AbstractArray}()
