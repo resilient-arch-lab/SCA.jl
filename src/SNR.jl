@@ -22,22 +22,22 @@ mutable struct SNRBasic{Tt<:AbstractFloat, Tl<:Integer} <: AbstractSNR
     totals::AbstractVector{Int}
     const nl::Int
     const ns::Int
-
-    function SNRBasic{Tt, Tl}(ns::Int, nl::Int) where {Tt<:AbstractFloat, Tl<:Integer}
-        sums = zeros(Tt, nl, ns)
-        sums_sq = zeros(Tt, nl, ns)
-        totals = zeros(Tl, nl)
-        new(sums, sums_sq, totals, nl, ns)
-    end
 end
 
-struct SNRMoM{Tt<:AbstractFloat, Tl<:Integer} <: AbstractMoMSNR
-    moments::UniVarMomentsAccIncremental{Tt, Tl, Array}
+function SNRBasic{Tt, Tl}(ns::Int, nl::Int) where {Tt<:AbstractFloat, Tl<:Integer}
+    sums = zeros(Tt, nl, ns)
+    sums_sq = zeros(Tt, nl, ns)
+    totals = zeros(Int, nl)
+    SNRBasic{Tt, Tl}(sums, sums_sq, totals, nl, ns)
 end
 
-function SNRMoM{Tt, Tl}(ns::Int, nl::Int, ldim::Int) where {Tt<:AbstractFloat, Tl<:Integer}
-    moments = UniVarMomentsAccIncremental{Tt, Tl, Array}(2, ns, nl, ldim)
-    SNRMoM{Tt, Tl}(moments)
+struct SNRMoM{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray} <: AbstractMoMSNR
+    moments::Moments.UniVarMomentsAcc{Tt, Tl, Ta}
+end
+
+function SNRMoM{Tt, Tl, Ta}(ns::Int, lrange::Int, ldim::Int) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+    moments = Moments.UniVarMomentsAcc{Tt, Tl, Ta}(2, ns, lrange, ldim)
+    SNRMoM{Tt, Tl, Ta}(moments)
 end
 
 function SNR_fit!(snr::SNRBasic{Tt, Tl}, traces, labels) where {Tt<:Real, Tl<:Real}
@@ -46,7 +46,7 @@ function SNR_fit!(snr::SNRBasic{Tt, Tl}, traces, labels) where {Tt<:Real, Tl<:Re
     sum_tiles = tiled_view(snr.sums, (size(traces, 1), samples_per_thread))
     sum_sq_tiles = tiled_view(snr.sums_sq, (size(traces, 1), samples_per_thread))
 
-    if !all(snr.totals == 0)
+    if !all(snr.totals .== 0)
         throw(ArgumentError("This type of SNR struct may only be fit once, and this instance has already been fit"))
     end
     
@@ -73,10 +73,10 @@ function SNR_finalize(snr::SNRBasic{Tt, Tl})::Vector where {Tt<:Real, Tl<:Real}
     vars = (snr.sums_sq ./ snr.totals) .- (means.^2)
     noises = mean(vars, dims=1)
 
-    signals ./ noises
+    vec(signals ./ noises)
 end
 
-function SNR_finalize(snr::AbstractMoMSNR)::Matrix
+function SNR_finalize(snr::AbstractMoMSNR)::AbstractArray
     μ, σ2 = get_mean_and_var(snr.moments, 1)
     signals = var(μ, dims=2)
     noises = mean(σ2, dims=2)

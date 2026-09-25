@@ -8,6 +8,7 @@ Random.seed!(12)
 
 
 @testset "Multivariate Moment Estimation" begin
+    # NOTE: this test doesn't always pass, even though the RNG has a fixed seed. Why?
     ns = 2  # must = 2 so that covariance can be calculated from the sums of centered products
     order = 1  # must = 1 for same reason
     m = Moments.MultiVarMomentsAcc{Float64, UInt8, Array}(order, ns, 256, 1)
@@ -253,18 +254,27 @@ end
 
 end
 
-@testset "Test that Chunked TTest is equivalent on dimension 2" begin
-    t = rand(Float64, 5000, 1000)
-    l = UInt8.(rand([0, 1], 5000))
+@testset "Test SNR and MoMSNR equivalence" begin
+    nt = 10000
+    ns = 100
+    lrange = 256
+    ldim = 16
 
-    ttest1 = TTest.TTestSingle{Float64, UInt8, Array}(2, 1000)
-    ttest2 = TTest.TTestChunked{Float64, UInt8, Array}(2, 1000, (5000, 200))
+    a = rand(nt, ns)
+    l = rand(UInt8, nt, ldim)
 
-    TTest.ttest_fit!(ttest1, t, l)
-    TTest.ttest_fit!(ttest2, t, l)
+    snr1 = [SNR.SNRBasic{Float64, UInt8}(ns, lrange) for _ in 1:ldim]
+    snr2 = SNR.SNRMoM{Float64, UInt8, Array}(ns, lrange, ldim)
 
-    res1 = TTest.ttest_finalize(ttest1)
-    res2 = TTest.ttest_finalize(ttest2)
+    for i in 1:ldim
+        SNR.SNR_fit!(snr1[i], a, @view(l[:, i]))
+    end
+    SNR.SNR_fit!(snr2, a, l)
 
-    @test all(res1 .≈ res2)
+    snr1_results = [SNR.SNR_finalize(snr1[i]) for i in 1:ldim]
+    snr2_results = SNR.SNR_finalize(snr2)
+
+    for i in 1:ldim
+        @test all(snr2_results[i, :] .≈ snr1_results[i])
+    end
 end
