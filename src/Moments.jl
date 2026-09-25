@@ -4,10 +4,7 @@ Parallel estimation of statistical moments
 
 """
 TODO:
-- Get rid of non-VecLabel acc and make the VecLabel methods handle label vectors (just rehsape them as n X 1 matrices)
 - Make a single function `fit!` to apply to incremental and non incremental MomentsAccs
-- Make functions `raw_moments`, `central_moments`, and `standardized_moments` for `AbstractMomentsAcc`
-- Move multivariate stuff here from testing branch
 """
 
 
@@ -106,6 +103,34 @@ function UniVarMomentsAccIncremental{Tt, Tl, Ta}(acc::UniVarMomentsAcc) where {T
     _ctrd_sums = fill!(similar(ctrd_sums), 0)
     _sums = fill!(Ta{Tt, 3}(undef, ldim, lrange, ns), 0)
     UniVarMomentsAccIncremental{Tt, Tl, Ta}(totals, ctrd_sums, order, ns, lrange, ldim, _totals, _ctrd_sums, _sums)
+end
+
+
+struct MultiVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray} <: AbstractMultivariateMomentsAcc{Tt, Tl, Ta}
+    totals::Ta
+    SCPs::Ta  # sums of centered products
+    α::Matrix{Int}  # order vectors (vector rows)
+    ns::UInt  # number of samples per trace (and therefore the variateness of sums of centered prods)
+    lrange::UInt
+    ldim::UInt
+    sums::Ta
+end
+
+function MultiVarMomentsAcc{Tt, Tl, Ta}(order::Union{Int, AbstractVector{Int}, AbstractMatrix{Int}}, ns::Integer, lrange::Integer, ldim::Integer) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+    if typeof(order) == Int
+        α = fill!(Ta{Int, 2}(undef, 1, ns), order)  # the same order is calculated for each sample position 
+    elseif typeof(order) <: AbstractVector{Int}
+        α = reshape(order, 1, ns)
+    else typeof(order) <: AbstractMatrix{Int}
+        checkbounds(order, 1, ns)
+        α = order
+    end
+    
+    totals = fill!(Ta{UInt32, 2}(undef, ldim, lrange), 0)
+    SCPs = fill!(Ta{Tt, 4}(undef, ldim, lrange, size(α, 1), 1), 0)
+
+    sums = Ta{Tt, 3}(undef, ldim, lrange, ns)
+    MultiVarMomentsAcc{Tt, Tl, Ta}(totals, SCPs, α, ns, lrange, ldim, sums)
 end
 
 
@@ -271,6 +296,17 @@ function centered_sum_update_pass_1!(acc::UniVarMomentsAcc{Tt, Tl, Ta}, traces::
     return
 end
 
+function centered_sum_update_pass_1!(acc::MultiVarMomentsAcc{Tt, Tl, Ta}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+    @boundscheck begin
+        checkbounds(acc.sums, acc.ldim, acc.lrange, size(traces, 2))
+        checkbounds(labels, size(traces, 1), acc.ldim)
+    end
+    
+    centered_sum_update_pass_1!(acc.sums, acc.totals, traces, labels)
+
+    return
+end
+
 # Second pass in two pass approach
 function centered_sum_update_pass_2!(ctrd_sums::AbstractArray{Tt}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     centered_sum_kern_ak!(ctrd_sums, traces, labels)
@@ -320,8 +356,21 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAcc{Tt, Tl, Ta}, traces::
     return
 end
 
+function centered_sum_update_pass_2!(acc::MultiVarMomentsAcc{Tt, Tl, Ta}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+    @boundscheck begin
+        checkbounds(acc.sums, acc.ldim, acc.lrange, size(traces, 2))
+        checkbounds(labels, size(traces, 1), acc.ldim)
+    end
 
-function fit_moments!(acc::AbstractUnivariateMomentsAcc, traces, labels)
+    means = acc.sums ./ acc.totals
+
+    centered_sum_kern_ak!(acc.SCPs, traces, labels, acc.α, means)
+
+    return
+end
+
+
+function fit_moments!(acc::AbstractMomentsAcc, traces, labels)
     centered_sum_update_pass_1!(acc, traces, labels)
     centered_sum_update_pass_2!(acc, traces, labels)
 end
@@ -459,7 +508,6 @@ end
 
 
 # Multivariate methods
-
 function centered_sum_kern_ak!(SCPs::AbstractArray{Tt, 4}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, order::AbstractMatrix{Int}, means::AbstractArray{Tt, 3}) where {Tt<:AbstractFloat, Tl<:Integer}
     @boundscheck begin
         # TODO
@@ -481,20 +529,20 @@ function centered_sum_kern_ak!(SCPs::AbstractArray{Tt, 4}, traces::AbstractVecOr
     end
 end
 
-function centered_sum_update!(acc::MultiVarMomentsAccIncremental{Tt, Tl, Ta}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
-    fill!(acc._sums, 0)
-    fill!(acc._totals, 0)
-    fill!(acc._SCPs, 0)
+# function centered_sum_update!(acc::MultiVarMomentsAccIncremental{Tt, Tl, Ta}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+#     fill!(acc._sums, 0)
+#     fill!(acc._totals, 0)
+#     fill!(acc._SCPs, 0)
     
-    # Pass 1, calculate labels wise sums
-    label_wise_sum_ak!(traces, labels, acc._sums, acc._totals)
+#     # Pass 1, calculate labels wise sums
+#     label_wise_sum_ak!(traces, labels, acc._sums, acc._totals)
 
-    # Pass 2: find means and calculate sums of centered prods
-    means = acc._sums ./ acc._totals
-    centered_sum_kern_ak!(acc._SCPs, traces, labels, acc.α, means)
+#     # Pass 2: find means and calculate sums of centered prods
+#     means = acc._sums ./ acc._totals
+#     centered_sum_kern_ak!(acc._SCPs, traces, labels, acc.α, means)
 
-    acc.SCPs .= acc._SCPs
-    acc.totals .= acc._totals
-end
+#     acc.SCPs .= acc._SCPs
+#     acc.totals .= acc._totals
+# end
 
 end  # module Moments
