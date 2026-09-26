@@ -106,6 +106,9 @@ function UniVarMomentsAccIncremental{Tt, Tl, Ta}(acc::UniVarMomentsAcc) where {T
 end
 
 
+# the update / merge formula for co-moments imposes some constraints:
+# 1. for MA and MB with mutli-index orders α and β respectively, the update formula requires
+#    that MA_{α-β} and MB_{α-β} be known for all possible β ≤ α (where β ≤ α means β_j ≤ α_j ∀ j∈{1, ..., d})
 struct MultiVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray} <: AbstractMultivariateMomentsAcc{Tt, Tl, Ta}
     totals::Ta
     SCPs::Ta  # sums of centered products
@@ -517,20 +520,37 @@ function centered_sum_kern_ak!(SCPs::AbstractArray{Tt, 4}, traces::AbstractVecOr
     end
 end
 
-# function centered_sum_update!(acc::MultiVarMomentsAccIncremental{Tt, Tl, Ta}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
-#     fill!(acc._sums, 0)
-#     fill!(acc._totals, 0)
-#     fill!(acc._SCPs, 0)
+# binomial of multi-indices as defined in https://doi.org/10.1007/s00180-015-0637-z, 3.11
+function Base.binomial(n::AbstractVector, k::AbstractVector)
+    @assert length(n) == length(k)
+    d = length(n)
     
-#     # Pass 1, calculate labels wise sums
-#     label_wise_sum_ak!(traces, labels, acc._sums, acc._totals)
+    res = 1
+    for i in 1:d
+        res *= binomial(n[i], k[i])
+    end
 
-#     # Pass 2: find means and calculate sums of centered prods
-#     means = acc._sums ./ acc._totals
-#     centered_sum_kern_ak!(acc._SCPs, traces, labels, acc.α, means)
+    return res
+end
 
-#     acc.SCPs .= acc._SCPs
-#     acc.totals .= acc._totals
-# end
+# update formula for co-moments (https://doi.org/10.1007/s00180-015-0637-z, 3.14)
+function merge_from_ak!(SCP1::AbstractArray{Tt, 2}, n1::AbstractArray{Int32, 0}, α::AbstractVector{Int32}, SCP2::AbstractArray{Tt, 2}, n2::AbstractArray{Int32, 0}, β::AbstractVector{Int32}) where { Tt<:AbstractFloat }
+    @boundscheck begin
+        checkbounds(SCP2, size(SCP1)...)
+        checkbounds(n2, size(n1)...)
+    end
+
+    @assert length(α) == length(β)
+    
+    order = size(SCP1, 1)
+    d = length(α)
+    n1 = n1[1]
+    n2 = n2[1]
+    n = n1 + n2
+
+    
+    
+    return nothing
+end
 
 end  # module Moments
