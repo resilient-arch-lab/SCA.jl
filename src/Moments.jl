@@ -9,7 +9,7 @@ TODO:
 
 
 module Moments
-export fit_moments!, merge_from!, get_mean_and_var, UniVarMomentsAccIncremental, centered_sum_update_pass_1!, centered_sum_update_pass_2!
+export fit_moments!, merge_from!, get_mean_and_var, UniVarMomentsAcc, UniVarMomentsAccIncremental, centered_sum_update_pass_1!, centered_sum_update_pass_2!
 
 include("Utils.jl")
 using .Utils
