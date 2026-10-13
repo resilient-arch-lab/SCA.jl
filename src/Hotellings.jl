@@ -23,13 +23,20 @@ end
 
 function hotellings_t2(test::HotellingsT2{Tt, Tl, Ta}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     
+    Moments.label_wise_sum_ak!(traces, labels, test.sums, test.totals)
     
-    # Moments.label_wise_sum_ak!(traces, labels, test.sums, test.totals)
+    # assumes ldim = 1 for now
+    x1bar = test.sums[1, 1, :] ./ test.totals[1, 1]; x2bar = test.sums[1, 2, :] ./ test.totals[1, 2]
     
-    # tmp1 = prod(test.totals) / sum(test.totals)
-    # @views tmp2 = (test.sums[:, :, 1] ./ test.totals[:, 1]) .- (test.sums[:, :, 2] ./ test.totals[:, 2])
-    # @views tmp2 = (test.sums[:, :, 1] ./ test.totals[:, 1]) .- (test.sums[:, :, 2] ./ test.totals[:, 2])
-    res = tmp1 .* (transpose(tmp2) * inv(cov(tmp2)))
+    # V could these me computed with the moments accumulator? They should be able to be
+    Σ1 = mapreduce(x -> ((x.-x1bar)*transpose(x.-x1bar)), .+, eachrow(traces[labels[:, 1] .== 0, :]), init=zeros(Tt, length(x1bar), length(x1bar)))
+    Σ2 = mapreduce(x -> ((x.-x2bar)*transpose(x.-x2bar)), .+, eachrow(traces[labels[:, 2] .== 1, :]), init=zeros(Tt, length(x2bar), length(x2bar)))
+    
+    Σpooled = (((test.totals[1, 1] - 1).*Σ1) .+ ((test.totals[1, 2] - 1).*Σ2)) ./ (test.totals[1, 1] + test.totals[1, 2] - 2)
+    tmp1 = prod(test.totals[1, :]) / sum(test.totals[1, :])
+    tmp2 = x1bar .- x2bar
+    res = tmp1 .* (transpose(tmp2) * inv(Σpooled) * tmp2)
+    
     return res
 end
 
