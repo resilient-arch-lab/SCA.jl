@@ -32,10 +32,10 @@ function hotellings_t2(test::HotellingsT2{Tt, Tl, Ta}, traces::AbstractArray{Tt}
     Σ1 = mapreduce(x -> ((x.-x1bar)*transpose(x.-x1bar)), .+, eachrow(traces[labels[:, 1] .== 0, :]), init=zeros(Tt, length(x1bar), length(x1bar)))
     Σ2 = mapreduce(x -> ((x.-x2bar)*transpose(x.-x2bar)), .+, eachrow(traces[labels[:, 2] .== 1, :]), init=zeros(Tt, length(x2bar), length(x2bar)))
     
-    Σpooled = (((test.totals[1, 1] - 1).*Σ1) .+ ((test.totals[1, 2] - 1).*Σ2)) ./ (test.totals[1, 1] + test.totals[1, 2] - 2)
+    Σ12 = (((test.totals[1, 1] - 1).*Σ1) .+ ((test.totals[1, 2] - 1).*Σ2)) ./ (test.totals[1, 1] + test.totals[1, 2] - 2)  # pooled sample covariance
     tmp1 = prod(test.totals[1, :]) / sum(test.totals[1, :])
     tmp2 = x1bar .- x2bar
-    res = tmp1 .* (transpose(tmp2) * inv(Σpooled) * tmp2)
+    res = tmp1 .* (transpose(tmp2) * inv(Σ12) * tmp2)
     
     return res
 end
