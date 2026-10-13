@@ -542,7 +542,6 @@ function merge_from_ak!(SCP1::AbstractArray{Tt, 2}, n1::AbstractArray{Int32, 0},
 
     @assert length(α) == length(β)
     
-    order = size(SCP1, 1)
     d = length(α)
     n1 = n1[1]
     n2 = n2[1]
