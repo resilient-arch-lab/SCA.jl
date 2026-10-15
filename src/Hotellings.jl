@@ -1,5 +1,5 @@
 module Hotellings
-export HotellingsT2, hotellings_t2
+export HotellingsT2, hotellings_t2!
 
 include("Moments.jl")
 using .Moments
@@ -11,17 +11,19 @@ struct HotellingsT2{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     sums::Ta
     totals::Ta
     
+    ns::UInt
+    ldim::UInt
 end
 
-function HotellingsT2{Tt, Tl, Ta}(ns, ldim) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+function HotellingsT2{Tt, Tl, Ta}(ns::Integer, ldim::Integer) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     sums = fill!(Ta{Tt, 3}(undef, ldim, 2, ns), 0)
     totals = fill!(Ta{Int32, 2}(undef, ldim, 2), 0)
 
-    HotellingsT2{Tt, Tl, Ta}(sums, totals)
+    HotellingsT2{Tt, Tl, Ta}(sums, totals, ns, ldim)
 end
 
 
-function hotellings_t2(test::HotellingsT2{Tt, Tl, Ta}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+function hotellings_t2!(test::HotellingsT2{Tt, Tl, Ta}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     
     Moments.label_wise_sum_ak!(traces, labels, test.sums, test.totals)
     
@@ -30,7 +32,7 @@ function hotellings_t2(test::HotellingsT2{Tt, Tl, Ta}, traces::AbstractArray{Tt}
     
     # V could these me computed with the moments accumulator? They should be able to be
     Σ1 = mapreduce(x -> ((x.-x1bar)*transpose(x.-x1bar)), .+, eachrow(traces[labels[:, 1] .== 0, :]), init=zeros(Tt, length(x1bar), length(x1bar)))
-    Σ2 = mapreduce(x -> ((x.-x2bar)*transpose(x.-x2bar)), .+, eachrow(traces[labels[:, 2] .== 1, :]), init=zeros(Tt, length(x2bar), length(x2bar)))
+    Σ2 = mapreduce(x -> ((x.-x2bar)*transpose(x.-x2bar)), .+, eachrow(traces[labels[:, 1] .== 1, :]), init=zeros(Tt, length(x2bar), length(x2bar)))
     
     Σ12 = (((test.totals[1, 1] - 1).*Σ1) .+ ((test.totals[1, 2] - 1).*Σ2)) ./ (test.totals[1, 1] + test.totals[1, 2] - 2)  # pooled sample covariance
     tmp1 = prod(test.totals[1, :]) / sum(test.totals[1, :])
