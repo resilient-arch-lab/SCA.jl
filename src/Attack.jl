@@ -1,10 +1,8 @@
 module Attack
 export GaussianModel, PCAGaussianModel, fit_model, apply_model
 
-include("Utils.jl")
-using .Utils
-include("Moments.jl")
-using .Moments
+import ..Utils as Utils
+import ..Moments as Moments
 
 using Statistics 
 using MultivariateStats
@@ -65,13 +63,13 @@ end
 mutable struct PCAGaussianModel{Tt<:Real, Tl<:Integer, Ta<:AbstractArray}
     gaussian_model::GaussianModel{Tt, Tl}
     labels::UnitRange{Tl}
-    moments::UniVarMomentsAccIncremental{Tt, Tl, Ta}
+    moments::Moments.UniVarMomentsAccIncremental{Tt, Tl, Ta}
     n_PCA_dims::Int
     PCA::Union{PCA, Nothing}
 
     function PCAGaussianModel{Tt, Tl, Ta}(nl::Int, ns::Int, n_PCA_dims::Int=3) where {Tt<:Real, Tl<:Integer, Ta<:AbstractArray}
         gaussian_model = GaussianModel{Tt, Tl}(nl)
-        m = UniVarMomentsAccIncremental{Tt, Tl, Ta}(2, ns, nl)
+        m = Moments.UniVarMomentsAccIncremental{Tt, Tl, Ta}(2, ns, nl)
         new(gaussian_model, gaussian_model.labels, m, n_PCA_dims, nothing)
     end
 end

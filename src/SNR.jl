@@ -5,10 +5,8 @@ Signal to Noise Ratio (SNR) estimation with method of moments
 module SNR
 export SNRBasic, SNRMoM, SNR_fit!, SNR_finalize
 
-include("Utils.jl")
-using .Utils
-include("Moments.jl")
-using .Moments
+import ..Utils as Utils
+import ..Moments as Moments
 
 using Statistics
 using Atomix

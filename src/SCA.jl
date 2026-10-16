@@ -1,6 +1,13 @@
 module SCA
 export SNR, Moments, Utils, Attack, TTest, Hotellings
 
+include("Utils.jl")
+using .Utils
+
+include("TestUtils.jl")
+
+include("Moments.jl")
+using .Moments
 
 include("SNR.jl")
 using .SNR
@@ -8,16 +15,8 @@ using .SNR
 include("TTest.jl")
 using .TTest
 
-include("Moments.jl")
-using .Moments
-
-include("Utils.jl")
-using .Utils
-
 include("Attack.jl")
-using .Attack 
-
-include("TestUtils.jl")
+using .Attack
 
 include("Hotellings.jl")
 using .Hotellings

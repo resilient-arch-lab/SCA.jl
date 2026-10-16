@@ -1,10 +1,8 @@
 module TTest
 export ttest_fit!, ttest_finalize, TTestMoM, TTestChunked
 
-include("Utils.jl")
-using .Utils
-include("Moments.jl")
-using .Moments
+import ..Utils as Utils
+import ..Moments as Moments
 
 abstract type AbstractTTest end
 abstract type AbstractMoMTTest <: AbstractTTest end

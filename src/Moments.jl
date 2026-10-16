@@ -11,8 +11,7 @@ TODO:
 module Moments
 export fit_moments!, merge_from!, get_mean_and_var, UniVarMomentsAcc, UniVarMomentsAccIncremental, centered_sum_update_pass_1!, centered_sum_update_pass_2!
 
-include("Utils.jl")
-using .Utils
+import ..Utils as Utils
 
 using Random
 using KernelAbstractions, Atomix
@@ -153,8 +152,10 @@ end
 function MultiVarMomentsAccTest{Tt, Tl, Ta}(idx_orders::Union{Tuple{Vararg{IdxOrder}}, AbstractVector{Tuple{Vararg{IdxOrder}}}}, ns::Integer, lrange::Integer, ldim::Integer) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     if typeof(idx_orders) == Tuple{Vararg{IdxOrder}} || typeof(idx_orders) <: Tuple{Vararg{IdxOrder}}
         idx_α = [idx_orders]
-    else  # typeof(idx_orders) <: AbstractVector{Tuple{Vararg{IdxOrder}}}
+    elseif typeof(idx_orders) <: AbstractVector{Tuple{Vararg{IdxOrder}}}
         idx_α = idx_orders
+    else
+        throw(error("Bad argument"))
     end
     
     totals = fill!(Ta{Int32, 2}(undef, ldim, lrange), 0)

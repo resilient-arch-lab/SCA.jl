@@ -1,8 +1,7 @@
 module Hotellings
 export HotellingsT2, hotellings_t2!
 
-include("Moments.jl")
-using .Moments
+import ..Moments as Moments
 using Statistics
 using LinearAlgebra
 
