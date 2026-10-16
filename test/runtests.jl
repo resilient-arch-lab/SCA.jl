@@ -24,6 +24,24 @@ Random.seed!(12)
     @test all(.≈((m.SCPs[1, 1, :, :] / size(a[l.==0, :], 1)), cov_0[1, 2], rtol=0.01))
 end
 
+@testset "Multivariate moment estimation rework test" begin
+    ns = 2  # must = 2 so that covariance can be calculated from the sums of centered products
+    order = 1  # must = 1 for same reason
+    
+    mref = Moments.MultiVarMomentsAcc{Float64, UInt8, Array}(order, ns, 256, 1)
+    mtest = Moments.MultiVarMomentsAccTest{Float64, UInt8, Array}(((Int32(1), Int32(order)), (Int32(2), Int32(order))), ns, 256, 1)
+
+    a = rand(50000, ns)  # lots of measurements are required for `cov` and `centered_sum_update` to converge
+                         # since covariance is calculated per label and there are 256 labels
+    l = rand(UInt8, 50000)
+
+    Moments.fit_moments!(mref, a, l)
+    Moments.fit_moments!(mtest, a, l)
+
+    @test all(.≈(mtest.SCPs[1, 1, :], mref.SCPs[1, 1, :, :]))
+
+end
+
 @testset "Moment estimation dataset shape compatibility test" begin
     amat = rand(Float32, 20000, 20)
     avec = vec(amat[:, 1])

@@ -105,7 +105,8 @@ function UniVarMomentsAccIncremental{Tt, Tl, Ta}(acc::UniVarMomentsAcc) where {T
     UniVarMomentsAccIncremental{Tt, Tl, Ta}(totals, ctrd_sums, order, ns, lrange, ldim, _totals, _ctrd_sums, _sums)
 end
 
-
+# TODO:
+#   Rather than an order array, the struct should accept an array of tuples (idx, order)  
 # the update / merge formula for co-moments imposes some constraints:
 # 1. for MA and MB with mutli-index orders α and β respectively, the update formula requires
 #    that MA_{α-β} and MB_{α-β} be known for all possible β ≤ α (where β ≤ α means β_j ≤ α_j ∀ j∈{1, ..., d})
@@ -134,6 +135,33 @@ function MultiVarMomentsAcc{Tt, Tl, Ta}(order::Union{Int, AbstractVector{Int}, A
 
     sums = Ta{Tt, 3}(undef, ldim, lrange, ns)
     MultiVarMomentsAcc{Tt, Tl, Ta}(totals, SCPs, α, ns, lrange, ldim, sums)
+end
+
+
+const IdxOrder = NTuple{2, Int32}
+
+struct MultiVarMomentsAccTest{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray} <: AbstractMultivariateMomentsAcc{Tt, Tl, Ta}
+    totals::Ta
+    SCPs::Ta  # sums of centered products
+    idx_α::AbstractVector{Tuple{Vararg{IdxOrder}}}  # index and order vectors
+    ns::UInt  # number of samples per trace (and therefore the variateness of sums of centered prods)
+    lrange::UInt
+    ldim::UInt
+    sums::Ta
+end
+
+function MultiVarMomentsAccTest{Tt, Tl, Ta}(idx_orders::Union{Tuple{Vararg{IdxOrder}}, AbstractVector{Tuple{Vararg{IdxOrder}}}}, ns::Integer, lrange::Integer, ldim::Integer) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+    if typeof(idx_orders) == Tuple{Vararg{IdxOrder}} || typeof(idx_orders) <: Tuple{Vararg{IdxOrder}}
+        idx_α = [idx_orders]
+    else  # typeof(idx_orders) <: AbstractVector{Tuple{Vararg{IdxOrder}}}
+        idx_α = idx_orders
+    end
+    
+    totals = fill!(Ta{Int32, 2}(undef, ldim, lrange), 0)
+    SCPs = fill!(Ta{Tt, 3}(undef, ldim, lrange, length(idx_α)), 0)
+
+    sums = Ta{Tt, 3}(undef, ldim, lrange, ns)
+    MultiVarMomentsAccTest{Tt, Tl, Ta}(totals, SCPs, idx_α, ns, lrange, ldim, sums)
 end
 
 
@@ -310,6 +338,17 @@ function centered_sum_update_pass_1!(acc::MultiVarMomentsAcc{Tt, Tl, Ta}, traces
     return
 end
 
+function centered_sum_update_pass_1!(acc::MultiVarMomentsAccTest{Tt, Tl, Ta}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+    @boundscheck begin
+        checkbounds(acc.sums, acc.ldim, acc.lrange, size(traces, 2))
+        checkbounds(labels, size(traces, 1), acc.ldim)
+    end
+    
+    centered_sum_update_pass_1!(acc.sums, acc.totals, traces, labels)
+
+    return
+end
+
 # Second pass in two pass approach
 function centered_sum_update_pass_2!(ctrd_sums::AbstractArray{Tt}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     centered_sum_kern_ak!(ctrd_sums, traces, labels)
@@ -368,6 +407,19 @@ function centered_sum_update_pass_2!(acc::MultiVarMomentsAcc{Tt, Tl, Ta}, traces
     means = acc.sums ./ acc.totals
 
     centered_sum_kern_ak!(acc.SCPs, traces, labels, acc.α, means)
+
+    return
+end
+
+function centered_sum_update_pass_2!(acc::MultiVarMomentsAccTest{Tt, Tl, Ta}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+    @boundscheck begin
+        checkbounds(acc.sums, acc.ldim, acc.lrange, size(traces, 2))
+        checkbounds(labels, size(traces, 1), acc.ldim)
+    end
+
+    means = acc.sums ./ acc.totals
+
+    centered_sum_kern_ak!(acc.SCPs, traces, labels, acc.idx_α, means)
 
     return
 end
@@ -516,6 +568,28 @@ function centered_sum_kern_ak!(SCPs::AbstractArray{Tt, 4}, traces::AbstractVecOr
                 ctrd_prod *= (traces[i, j] - means[l, l_i, j]) ^ order[o, j]
             end
             SCPs[l, l_i, o, 1] += ctrd_prod
+        end
+    end
+end
+
+function centered_sum_kern_ak!(SCPs::AbstractArray{Tt, 3}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, idx_orders::AbstractVector{Tuple{Vararg{IdxOrder}}}, means::AbstractArray{Tt, 3}) where {Tt<:AbstractFloat, Tl<:Integer}
+    @boundscheck begin
+        # TODO
+    end
+
+    itr_view = @view SCPs[:, 1, :]
+
+    # parallelize over orders (for now)
+    AK.foreachindex(itr_view) do idx
+        (l, o) = CartesianIndices(itr_view)[idx].I
+        idx_order = idx_orders[o]  # one tuple of index order tuples
+        for i in axes(traces, 1)
+            l_i = convert(Int32, labels[i, l]+1)
+            ctrd_prod = 1
+            for (j, α) in idx_order
+                ctrd_prod *= (traces[i, j] - means[l, l_i, j]) ^ α
+            end
+            SCPs[l, l_i, o] += ctrd_prod
         end
     end
 end
