@@ -22,10 +22,9 @@ function tiled_view(A::AbstractArray{T, N}, tile_size::NTuple{N}; return_indices
     end
 end
 
-function tiled_slices(A_size::NTuple{N}, tile_size::NTuple{N}; return_indices::Bool = false) where {T, N}
+function tiled_slices(A_size::NTuple{N}, tile_size::NTuple{N}) where {N}
     slices = [[s for s=Iterators.partition(1:A_size[d], tile_size[d])] for d=1:N]
     tile_indices = collect.(collect(Iterators.product(slices...))) # NDArray of N-element vectors{UnitRange}
-    # @views out = [A_size[idx...] for idx in tile_indices]
     return tile_indices
 end
 
