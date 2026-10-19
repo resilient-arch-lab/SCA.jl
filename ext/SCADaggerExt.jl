@@ -10,28 +10,28 @@ a_chunks(ctrd_sums_chunk::NTuple{4, Union{Int, UnitRange, Colon}})::NTuple{2, Un
 labels_chunks(ctrd_sums_chunk::NTuple{4, Union{Int, UnitRange, Colon}})::NTuple{2, Union{Int, UnitRange, Colon}} = (Colon(), ctrd_sums_chunk[1])
 
 # TODO: finish when I finalize the strategy in `centered_sum_update`
-function Moments.UniVarMomentsAcc{Tt, Tl, DArray}(order, a::DArray, labels::DArray) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
-    @assert typeof(a) <: AbstractVecOrMat "a expected to be a Vector or Matrix, got $(typeof(a))"
-    @assert typeof(labels) <: AbstractVecOrMat "labels expected to be a Vector or Matrix, got $(typeof(labels))"
+# function Moments.UniVarMomentsAcc{Tt, Tl, DArray}(order, a::DArray, labels::DArray) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+#     @assert typeof(a) <: AbstractVecOrMat "a expected to be a Vector or Matrix, got $(typeof(a))"
+#     @assert typeof(labels) <: AbstractVecOrMat "labels expected to be a Vector or Matrix, got $(typeof(labels))"
     
-    ns = size(a, 2)
-    ldim = size(labels, 2)
-    lrange = length(unique(labels))
+#     ns = size(a, 2)
+#     ldim = size(labels, 2)
+#     lrange = length(unique(labels))
 
-    a_parts = a.partitioning
-    l_parts = labels.partitioning
-    @assert a_parts.blocksize[1] == l_parts.blocksize[1] "a and labels must be chunked equally over first dimension"
+#     a_parts = a.partitioning
+#     l_parts = labels.partitioning
+#     @assert a_parts.blocksize[1] == l_parts.blocksize[1] "a and labels must be chunked equally over first dimension"
 
-    # totals = fill!(Ta{UInt32, 2}(undef, ldim, lrange), 0)
-    # ctrd_sums = fill!(Ta{Tt, 4}(undef, ldim, lrange, order, ns), 0)
-    # sums = fill!(Ta{Tt, 3}(undef, ldim, lrange, ns), 0)
+#     # totals = fill!(Ta{UInt32, 2}(undef, ldim, lrange), 0)
+#     # ctrd_sums = fill!(Ta{Tt, 4}(undef, ldim, lrange, order, ns), 0)
+#     # sums = fill!(Ta{Tt, 3}(undef, ldim, lrange, ns), 0)
 
-    sums = fill!(Ta{Tt, 3}(undef, ldim, lrange, ns), 0)
-    totals = fill!(Ta{UInt32, 2}(undef, ldim, lrange), 0)
-    ctrd_sums = zeros(Blocks(l_parts.blocksize[2], lrange, order, a_parts.blocksize[2]), Tt, size(labels, 2), lrange, order, size(a, 2))
+#     sums = fill!(Ta{Tt, 3}(undef, ldim, lrange, ns), 0)
+#     totals = fill!(Ta{UInt32, 2}(undef, ldim, lrange), 0)
+#     ctrd_sums = zeros(Blocks(l_parts.blocksize[2], lrange, order, a_parts.blocksize[2]), Tt, size(labels, 2), lrange, order, size(a, 2))
 
-    UniVarMomentsAcc{Tt, Tl, DArray}(order, ns, lrange, ldim)
-end
+#     UniVarMomentsAcc{Tt, Tl, DArray}(order, ns, lrange, ldim)
+# end
 
 
 function mean_helper(moments::AbstractArray{Tt, 4}, sums::AbstractArray{Tt, 3}, totals::AbstractArray) where{Tt<:AbstractFloat}
@@ -119,7 +119,7 @@ end
 """
 Distributed moment estimation with intermediate value reduction between workers.
 
-
+# TODO: document input shape / chunking constraints
 """
 function Moments.centered_sum_update(a::DMatrix{Tt}, labels::DMatrix{Tl}, lrange::Int, order::Int, ::Val{:reduction})::DArray{Tt, 4} where {Tt<:AbstractFloat, Tl<:Integer}
     # TODO: do tree-reduction between DArray intermedaites instaed of naive reduction
