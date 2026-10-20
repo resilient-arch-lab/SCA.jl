@@ -41,6 +41,7 @@ function UniVarMomentsAcc{Tt, Tl, Ta}(order, ns, lrange, ldim) where {Tt<:Abstra
     UniVarMomentsAcc{Tt, Tl, Ta}(totals, ctrd_sums, order, ns, lrange, ldim, sums)
 end
 
+# initialize from dataset shape and labels
 function UniVarMomentsAcc{Tt, Tl, Ta}(order, a::Ta, labels::Ta) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     @assert typeof(a) <: AbstractVecOrMat "a expected to be a Vector or Matrix, got $(typeof(a))"
     @assert typeof(labels) <: AbstractVecOrMat "labels expected to be a Vector or Matrix, got $(typeof(labels))"
@@ -432,7 +433,7 @@ function fit_moments!(acc::AbstractMomentsAcc, traces, labels)
 end
 
 # This scratch storage uses up a ton of memory, runtime is a lot slower than AK implementations.
-function centered_sum_update(traces::Matrix{Tt}, labels::Matrix{Tl}, nl::Int, order::Int)::Array{Tt, 4} where {Tt<:AbstractFloat, Tl<:Integer}
+function get_moments(traces::Matrix{Tt}, labels::Matrix{Tl}, nl::Int, order::Int)::Array{Tt, 4} where {Tt<:AbstractFloat, Tl<:Integer}
     tile_size = (max(4096, cld(size(traces, 1), cld(Threads.nthreads(), sizeof(Tt)))), cld(1024, sizeof(Tt)))
     trace_tiles = Utils.tiled_view(traces, tile_size)
     label_tiles = Utils.tiled_view(labels, (tile_size[1], size(labels, 2)))
