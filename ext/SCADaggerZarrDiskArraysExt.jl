@@ -5,8 +5,6 @@ using DiskArrays
 using Zarr
 using Dagger
 
-# Base.getindex(arr::Zarr.ZArray, d::ArrayDomain) = arr[d.indexes...]
-
 # Cant load from disk in a truly lazy way, since DArrays are made of chunks, and delayed tasks are not chunks
 
 function Dagger.distribute(Za::Zarr.ZArray{T, N}) where {T, N}

@@ -21,7 +21,7 @@ Random.seed!(12)
 
     Moments.fit_moments!(m, a, l)
 
-    @test all(.≈((m.SCPs[1, 1, :, :] / size(a[l.==0, :], 1)), cov_0[1, 2], rtol=0.01))
+    @test all(.≈((Moments.centered_sums(m)[1, 1, :, :] / size(a[l.==0, :], 1)), cov_0[1, 2], rtol=0.01))
 end
 
 @testset "Multivariate moment estimation rework test" begin
@@ -38,8 +38,7 @@ end
     Moments.fit_moments!(mref, a, l)
     Moments.fit_moments!(mtest, a, l)
 
-    @test all(.≈(mtest.SCPs[1, 1, :], mref.SCPs[1, 1, :, :]))
-
+    @test all(.≈(Moments.centered_sums(mtest)[1, 1, :], Moments.centered_sums(mref)[1, 1, :, :]))
 end
 
 @testset "Moment estimation dataset shape compatibility test" begin
@@ -58,8 +57,8 @@ end
     Moments.fit_moments!(m_amat_lvec, amat, lvec)
     Moments.fit_moments!(m_amat_lmat, amat, lmat)
 
-    @test all(m_avec_lvec.ctrd_sums[1, :, :, :] .≈ m_amat_lvec.ctrd_sums[1, :, :, 1])
-    @test all(m_avec_lvec.ctrd_sums[1, :, :, :] .≈ m_avec_lmat.ctrd_sums[1, :, :, 1])
+    @test all(Moments.centered_sums(m_avec_lvec)[1, :, :, :] .≈ Moments.centered_sums(m_amat_lvec)[1, :, :, 1])
+    @test all(Moments.centered_sums(m_avec_lvec)[1, :, :, :] .≈ Moments.centered_sums(m_avec_lmat)[1, :, :, 1])
 end
 
 @testset "Centered products estimation satability test 1: re-ordering error vs. float length (no merging)" begin
@@ -86,14 +85,14 @@ end
         
         # store results
         if isempty(results32)
-            results32 = m32.ctrd_sums
+            results32 = Moments.centered_sums(m32)
         else
-            results32 = cat(results32, m32.ctrd_sums, dims=5)
+            results32 = cat(results32, Moments.centered_sums(m32), dims=5)
         end
         if isempty(results64)
-            results64 = m64.ctrd_sums
+            results64 = Moments.centered_sums(m64)
         else
-            results64 = cat(results64, m64.ctrd_sums, dims=5)
+            results64 = cat(results64, Moments.centered_sums(m64), dims=5)
         end
 
         # shuffle trace rows and labels 
@@ -141,7 +140,7 @@ end
     # calculate ground truth
     m256 = Moments.UniVarMomentsAccIncremental{BigFloat, UInt8, Array}(order, size(a64, 2), 256, NL)
     Moments.fit_moments!(m256, a256, l)
-    resultsref = m256.ctrd_sums
+    resultsref = Moments.centered_sums(m256)
 
     # perform `n` iterations
     for i in 1:n
@@ -153,14 +152,14 @@ end
         
         # store results
         if isempty(results32)
-            results32 = m32.ctrd_sums
+            results32 = Moments.centered_sums(m32)
         else
-            results32 = cat(results32, m32.ctrd_sums, dims=5)
+            results32 = cat(results32, Moments.centered_sums(m32), dims=5)
         end
         if isempty(results64)
-            results64 = m64.ctrd_sums
+            results64 = Moments.centered_sums(m64)
         else
-            results64 = cat(results64, m64.ctrd_sums, dims=5)
+            results64 = cat(results64, Moments.centered_sums(m64), dims=5)
         end
 
         # shuffle trace rows and labels
@@ -238,9 +237,9 @@ end
         end
         
         # get final results
-        results32 = m32.ctrd_sums
-        results64 = m64.ctrd_sums
-        results256 = m256.ctrd_sums
+        results32 = Moments.centered_sums(m32)
+        results64 = Moments.centered_sums(m64)
+        results256 = Moments.centered_sums(m256)
 
         # analysis
         if batches == 1
