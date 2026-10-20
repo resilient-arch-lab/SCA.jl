@@ -11,10 +11,10 @@ Random.seed!(12)
     # NOTE: this test doesn't always pass, even though the RNG has a fixed seed. Why?
     ns = 2  # must = 2 so that covariance can be calculated from the sums of centered products
     order = 1  # must = 1 for same reason
-    m = Moments.MultiVarMomentsAcc{Float64, UInt8, Array}(order, ns, 256, 1)
+    m = Moments.MultiVarMomentsAcc{Float64, UInt8, Array}(order, ns, 2, 1)
     a = rand(50000, ns)  # lots of measurements are required for `cov` and `centered_sum_update` to converge
                          # since covariance is calculated per label and there are 256 labels
-    l = rand(UInt8, 50000)
+    l = UInt8.(rand([0, 1], 50000))
 
     set_0 = a[l.==0, :]
     cov_0 = cov(set_0) 
@@ -28,12 +28,12 @@ end
     ns = 2  # must = 2 so that covariance can be calculated from the sums of centered products
     order = 1  # must = 1 for same reason
     
-    mref = Moments.MultiVarMomentsAcc{Float64, UInt8, Array}(order, ns, 256, 1)
-    mtest = Moments.MultiVarMomentsAccTest{Float64, UInt8, Array}(((Int32(1), Int32(order)), (Int32(2), Int32(order))), ns, 256, 1)
+    mref = Moments.MultiVarMomentsAcc{Float64, UInt8, Array}(order, ns, 2, 1)
+    mtest = Moments.MultiVarMomentsAccTest{Float64, UInt8, Array}(((Int32(1), Int32(order)), (Int32(2), Int32(order))), ns, 2, 1)
 
     a = rand(50000, ns)  # lots of measurements are required for `cov` and `centered_sum_update` to converge
                          # since covariance is calculated per label and there are 256 labels
-    l = rand(UInt8, 50000)
+    l = UInt8.(rand([0, 1], 50000))
 
     Moments.fit_moments!(mref, a, l)
     Moments.fit_moments!(mtest, a, l)
