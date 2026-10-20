@@ -9,7 +9,7 @@ TODO:
 
 
 module Moments
-export fit_moments!, merge_from!, get_mean_and_var, UniVarMomentsAcc, UniVarMomentsAccIncremental, centered_sum_update_pass_1!, centered_sum_update_pass_2!
+export fit_moments!, merge_from!, get_mean_and_var, UniVarMomentsAcc, UniVarMomentsAccIncremental, centered_sum_update_pass_1!, centered_sum_update_pass_2!, centered_sums, totals
 
 import ..Utils as Utils
 
@@ -138,6 +138,7 @@ function MultiVarMomentsAcc{Tt, Tl, Ta}(order::Union{Int, AbstractVector{Int}, A
 end
 
 
+# TODO: depricate old MultiVarMomentsAcc
 const IdxOrder = NTuple{2, Int32}
 
 struct MultiVarMomentsAccTest{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray} <: AbstractMultivariateMomentsAcc{Tt, Tl, Ta}
@@ -196,6 +197,20 @@ function MultiVarMomentsAccIncremental{Tt, Tl, Ta}(order::Union{Int, AbstractVec
     _SCPs = similar(SCPs)
     _sums = Ta{Tt, 3}(undef, ldim, lrange, ns)
     MultiVarMomentsAccIncremental{Tt, Tl, Ta}(totals, SCPs, α, ns, lrange, ldim, _totals, _SCPs, _sums)
+end
+
+
+# utility methods for external interaction
+function centered_sums(acc::AbstractUnivariateMomentsAcc) 
+    return acc.ctrd_sums
+end
+
+function centered_sums(acc::AbstractMultivariateMomentsAcc)
+    return acc.SCPs
+end
+
+function totals(acc::AbstractMomentsAcc)
+    return acc.totals
 end
 
 
@@ -512,7 +527,7 @@ function raw_moments(m::AbstractUnivariateMomentsAcc, d::Int)
     @assert d >= 1 "cannot compute raw moment of order < 1 from MomentsAcc struct"
 
     if d == 1
-        M_d = m.ctrd_sums[:, :, 1, :]
+        M_d = centered_sums(m)[:, :, 1, :]
     else
         @error "cannot compute raw moment of order > 1 from MomentsAcc struct"
     end
@@ -523,7 +538,7 @@ end
 function centeral_moments(m::AbstractUnivariateMomentsAcc, d::Int)
     @assert d >= 2 "cannot compute centered moment of order < 2 from MomentsAcc struct"
 
-    CM_d = @view(m.ctrd_sums[:, :, d, :]) ./ m.totals
+    CM_d = @view(centered_sums(m)[:, :, d, :]) ./ totals(m)
     return CM_d
 end
 

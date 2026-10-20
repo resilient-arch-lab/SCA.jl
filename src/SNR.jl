@@ -40,9 +40,9 @@ end
 
 function SNR_fit!(snr::SNRBasic{Tt, Tl}, traces, labels) where {Tt<:Real, Tl<:Real}
     samples_per_thread = cld(size(traces, 2), Threads.nthreads())
-    trace_tiles = tiled_view(traces, (size(traces, 1), samples_per_thread))
-    sum_tiles = tiled_view(snr.sums, (size(traces, 1), samples_per_thread))
-    sum_sq_tiles = tiled_view(snr.sums_sq, (size(traces, 1), samples_per_thread))
+    trace_tiles = Utils.tiled_view(traces, (size(traces, 1), samples_per_thread))
+    sum_tiles = Utils.tiled_view(snr.sums, (size(traces, 1), samples_per_thread))
+    sum_sq_tiles = Utils.tiled_view(snr.sums_sq, (size(traces, 1), samples_per_thread))
 
     if !all(snr.totals .== 0)
         throw(ArgumentError("This type of SNR struct may only be fit once, and this instance has already been fit"))
@@ -61,7 +61,7 @@ function SNR_fit!(snr::SNRBasic{Tt, Tl}, traces, labels) where {Tt<:Real, Tl<:Re
 end
 
 function SNR_fit!(snr::AbstractMoMSNR, traces, labels)
-    fit_moments!(snr.moments, traces, labels)
+    Moments.fit_moments!(snr.moments, traces, labels)
 end
 
 function SNR_finalize(snr::SNRBasic{Tt, Tl})::Vector where {Tt<:Real, Tl<:Real}
@@ -75,7 +75,7 @@ function SNR_finalize(snr::SNRBasic{Tt, Tl})::Vector where {Tt<:Real, Tl<:Real}
 end
 
 function SNR_finalize(snr::AbstractMoMSNR)::AbstractArray
-    μ, σ2 = get_mean_and_var(snr.moments, 1)
+    μ, σ2 = Moments.get_mean_and_var(snr.moments, 1)
     signals = var(μ, dims=2)
     noises = mean(σ2, dims=2)
     dropdims(signals ./ noises, dims=2)

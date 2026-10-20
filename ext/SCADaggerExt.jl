@@ -10,22 +10,43 @@ a_chunks(ctrd_sums_chunk::NTuple{4, Union{Int, UnitRange, Colon}})::NTuple{2, Un
 labels_chunks(ctrd_sums_chunk::NTuple{4, Union{Int, UnitRange, Colon}})::NTuple{2, Union{Int, UnitRange, Colon}} = (Colon(), ctrd_sums_chunk[1])
 
 
-# function Moments.UniVarMomentsAcc{Tt, Tl, DArray}(order, a::DArray, labels::DArray) where {Tt<:AbstractFloat, Tl<:Integer}
-#     @assert typeof(a) <: AbstractVecOrMat "a expected to be a Vector or Matrix, got $(typeof(a))"
-#     @assert typeof(labels) <: AbstractVecOrMat "labels expected to be a Vector or Matrix, got $(typeof(labels))"
+function Moments.UniVarMomentsAcc{Tt, Tl, DArray}(order, a::DArray, labels::DArray) where {Tt<:AbstractFloat, Tl<:Integer}
+    @assert typeof(a) <: AbstractVecOrMat "a expected to be a Vector or Matrix, got $(typeof(a))"
+    @assert typeof(labels) <: AbstractVecOrMat "labels expected to be a Vector or Matrix, got $(typeof(labels))"
 
-#     a_parts = a.partitioning; a_procs = chunk_processors(a)
-#     l_parts = labels.partitioning; l_procs = chunk_processors(labels)
-#     @assert a_parts.blocksize[1] == l_parts.blocksize[1] "traces and labels must be chunked equally over first dimension"
-#     @assert size(labels.chunks, 2) == 1 "labels may not be partitioned over dimension 2"
-#     @assert size(a.chunks, 2) == 1 "a may not be partitioned over dimension 2"
-#     @assert all(a_procs[n, 1] == l_procs[n, 1] for n in axes(a_procs, 1)) "a and labels chunks on same dim 1 index must reside on same processor"
-    
-#     ns = size(a, 2)
-#     ldim = size(labels, 2)
-#     lrange = length(unique(labels))
-#     Moments.UniVarMomentsAcc{Tt, Tl, DArray}(order, ns, lrange, ldim)
+    a_parts = a.partitioning; a_procs = chunk_processors(a)
+    l_parts = labels.partitioning; l_procs = chunk_processors(labels)
+    @assert a_parts.blocksize[1] == l_parts.blocksize[1] "traces and labels must be chunked equally over first dimension"
+    @assert size(labels.chunks, 2) == 1 "labels may not be partitioned over dimension 2"
+    @assert size(a.chunks, 2) == 1 "a may not be partitioned over dimension 2"
+    @assert all(a_procs[n, 1] == l_procs[n, 1] for n in axes(a_procs, 1)) "a and labels chunks on same dim 1 index must reside on same processor"
+
+    ns = size(a, 2)
+    ldim = size(labels, 2)
+    lrange = length(unique(labels))
+
+    sums = zeros(Blocks(1, size(labels, 2), lrange, size(a, 2)), Tt, size(a.chunks, 1), size(labels, 2), lrange, size(a, 2); assignment=a_procs[:, :, :, :])  # extra dim so each worker has chunk
+    totals = zeros(Blocks(1, size(labels, 2), lrange), Int32, size(a.chunks, 1), size(labels, 2), lrange; assignment=assignment=a_procs[:, :, :])  # extra dim so each worker has chunk
+    ctrd_sums = zeros(Blocks(1, size(labels, 2), lrange, order, size(a, 2)), Tt, size(a.chunks, 1), size(labels, 2), lrange, order, size(a, 2); assignment=a_procs[:, :, :, :, :])  # extra dim so each worker has chunk
+
+    Moments.UniVarMomentsAcc{Tt, Tl, DArray}(totals, ctrd_sums, order, ns, lrange, ldim, sums)
+end
+
+
+function Moments.centered_sums(acc::Moments.AbstractUnivariateMomentsAcc{Tt, Tl, DArray}) where {Tt, Tl}
+    # assumes chunking scheme with no chunking over sample axis
+    return dropdims(fetch(acc.ctrd_sums.chunks[1, 1, 1, 1, 1]), dims=1)
+end
+
+# function Moments.centered_sums(acc::Moments.AbstractMultivariateMomentsAcc{DArray, Tt, Tl}) where {Tt, Tl}
+#     return acc.SCPs
 # end
+
+function Moments.totals(acc::Moments.AbstractMomentsAcc{Tt, Tl, DArray}) where {Tt, Tl}
+    # assumes chunking scheme with no chunking over sample axis
+    return dropdims(fetch(acc.totals.chunks[1, 1, 1]), dims=1)
+end
+
 
 
 function mean_helper(moments::AbstractArray{Tt, 4}, sums::AbstractArray{Tt, 3}, totals::AbstractArray) where {Tt<:AbstractFloat}
@@ -65,6 +86,54 @@ function datadeps_bin_tree_reduce(op::Base.Callable, As::Vector{<:Dagger.DArray}
     end
     return As[1]
 end
+
+
+"""
+These methods are necessary since the reduction-style distributed estimation method adds another dimension to the intermediate
+arrays which cannot be removed before calling the appropriate method.
+"""
+
+function dagger_centered_sum_update_pass_1!(sums::AbstractArray{Tt, 4}, totals::AbstractArray{Int32, 3}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+    Moments.centered_sum_update_pass_1!(dropdims(sums, dims=1), dropdims(totals, dims=1), traces, labels)
+    return
+end
+
+function dagger_centered_sum_update_pass_2!(ctrd_sums::AbstractArray{Tt, 5}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+    Moments.centered_sum_update_pass_2!(dropdims(ctrd_sums, dims=1), traces, labels)
+    return
+end
+
+
+function Moments.fit_moments!(acc::Moments.UniVarMomentsAcc{Tt, Tl, DArray}, traces::DArray, labels::DArray) where {Tt, Tl}
+    Dagger.spawn_datadeps() do 
+        # distributed pass 1
+        for i in axes(labels.chunks, 1)
+            Dagger.@spawn dagger_centered_sum_update_pass_1!(InOut(acc.sums.chunks[i, 1, 1, 1]), InOut(acc.totals.chunks[i, 1, 1]), In(traces.chunks[i, 1]), In(labels.chunks[i, 1]))
+        end
+        
+        # calculate mean
+        for i in 2:size(labels.chunks, 1)
+            Dagger.@spawn sum_reduction_helper!(InOut(acc.sums.chunks[1, 1, 1, 1]), In(acc.sums.chunks[i, 1, 1, 1]))
+            Dagger.@spawn sum_reduction_helper!(InOut(acc.totals.chunks[1, 1, 1]), In(acc.totals.chunks[i, 1, 1]))
+        end
+        Dagger.@spawn mean_helper(Out(acc.ctrd_sums.chunks[1, 1, 1, 1, 1]), In(acc.sums.chunks[1, 1, 1, 1]), In(acc.totals.chunks[1, 1, 1]))
+        for i in 2:size(labels.chunks, 1)
+            Dagger.@spawn copyto!(Out(acc.ctrd_sums.chunks[i, 1, 1, 1, 1]), In(acc.ctrd_sums.chunks[1, 1, 1, 1, 1]))
+        end
+
+        # distributed pass 2
+        for i in axes(labels.chunks, 1)
+            Dagger.@spawn dagger_centered_sum_update_pass_2!(InOut(acc.ctrd_sums.chunks[i, 1, 1, 1, 1]), In(traces.chunks[i, 1]), In(labels.chunks[i, 1]))
+        end
+
+        # reduce ctrd_sums
+        for i in 2:size(labels.chunks, 1)
+            Dagger.@spawn cs_sum_reduction_helper!(InOut(acc.ctrd_sums.chunks[1, 1, 1, 1, 1]), In(acc.ctrd_sums.chunks[i, 1, 1, 1, 1]))
+        end
+    end
+end
+
+
 
 """
 Distributed moment estimation with intermediate value communication.
@@ -118,21 +187,10 @@ function Moments.get_moments(a::DMatrix{Tt}, labels::DMatrix{Tl}, lrange::Int, o
     return collect(ctrd_sums)
 end
 
-
-function dagger_centered_sum_update_pass_1!(sums::AbstractArray{Tt, 4}, totals::AbstractArray{Int32, 3}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
-    Moments.centered_sum_update_pass_1!(dropdims(sums, dims=1), dropdims(totals, dims=1), traces, labels)
-    return
-end
-
-function dagger_centered_sum_update_pass_2!(ctrd_sums::AbstractArray{Tt, 5}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
-    Moments.centered_sum_update_pass_2!(dropdims(ctrd_sums, dims=1), traces, labels)
-    return
-end
-
 """
 Distributed moment estimation with intermediate value reduction between workers.
 
-# TODO: document input shape / chunking constraints
+# TODO: document input shape / chunking constraints (see assert statements)
 """
 function Moments.get_moments(a::DMatrix{Tt}, labels::DMatrix{Tl}, lrange::Int, order::Int, ::Val{:reduction})::Array{Tt, 4} where {Tt<:AbstractFloat, Tl<:Integer}
     # TODO: do tree-reduction between DArray intermedaites instaed of naive reduction
@@ -152,9 +210,6 @@ function Moments.get_moments(a::DMatrix{Tt}, labels::DMatrix{Tl}, lrange::Int, o
 
     # allocate intermediate values for each chunk on i axis
     @debug "allocating intermediates"
-    # raw_sums = [zeros(Blocks(size(labels, 2), lrange, size(a, 2)), Tt, size(labels, 2), lrange, size(a, 2); assignment=reshape([node, ], 1, 1, 1)) for node in vec(a_procs)]
-    # totals = [zeros(Blocks(size(labels, 2), lrange), Int32, size(labels, 2), lrange; assignment=reshape([node, ], 1, 1)) for node in vec(a_procs)]
-    # ctrd_sums = [zeros(Blocks(size(labels, 2), lrange, order, size(a, 2)), Tt, size(labels, 2), lrange, order, size(a, 2); assignment=reshape([node, ], 1, 1, 1, 1)) for node in vec(a_procs)]
     raw_sums = zeros(Blocks(1, size(labels, 2), lrange, size(a, 2)), Tt, size(a.chunks, 1), size(labels, 2), lrange, size(a, 2); assignment=a_procs[:, :, :, :])  # extra dim so each worker has chunk
     totals = zeros(Blocks(1, size(labels, 2), lrange), Int32, size(a.chunks, 1), size(labels, 2), lrange; assignment=assignment=a_procs[:, :, :])  # extra dim so each worker has chunk
     ctrd_sums = zeros(Blocks(1, size(labels, 2), lrange, order, size(a, 2)), Tt, size(a.chunks, 1), size(labels, 2), lrange, order, size(a, 2); assignment=a_procs[:, :, :, :, :])  # extra dim so each worker has chunk
@@ -163,33 +218,26 @@ function Moments.get_moments(a::DMatrix{Tt}, labels::DMatrix{Tl}, lrange::Int, o
     Dagger.spawn_datadeps() do 
         # distributed pass 1
         for i in axes(labels.chunks, 1)
-            # Dagger.@spawn Moments.centered_sum_update_pass_1!(InOut(raw_sums[i].chunks[1, 1, 1]), InOut(totals[i].chunks[1, 1]), In(a.chunks[i, 1]), In(labels.chunks[i, 1]))
             Dagger.@spawn dagger_centered_sum_update_pass_1!(InOut(raw_sums.chunks[i, 1, 1, 1]), InOut(totals.chunks[i, 1, 1]), In(a.chunks[i, 1]), In(labels.chunks[i, 1]))
         end
         
         # calculate mean
         for i in 2:size(labels.chunks, 1)
-            # Dagger.@spawn sum_reduction_helper!(InOut(raw_sums[1].chunks[1, 1, 1]), In(raw_sums[i].chunks[1, 1, 1]))
-            # Dagger.@spawn sum_reduction_helper!(InOut(totals[1].chunks[1, 1]), In(totals[i].chunks[1, 1]))
             Dagger.@spawn sum_reduction_helper!(InOut(raw_sums.chunks[1, 1, 1, 1]), In(raw_sums.chunks[i, 1, 1, 1]))
             Dagger.@spawn sum_reduction_helper!(InOut(totals.chunks[1, 1, 1]), In(totals.chunks[i, 1, 1]))
         end
-        # Dagger.@spawn mean_helper(Out(ctrd_sums[1].chunks[1, 1, 1, 1]), In(raw_sums[1].chunks[1, 1, 1]), In(totals[1].chunks[1, 1]))
         Dagger.@spawn mean_helper(Out(ctrd_sums.chunks[1, 1, 1, 1, 1]), In(raw_sums.chunks[1, 1, 1, 1]), In(totals.chunks[1, 1, 1]))
         for i in 2:size(labels.chunks, 1)
-            # Dagger.@spawn copyto!(Out(ctrd_sums[i].chunks[1, 1, 1, 1]), In(ctrd_sums[1].chunks[1, 1, 1, 1]))
             Dagger.@spawn copyto!(Out(ctrd_sums.chunks[i, 1, 1, 1, 1]), In(ctrd_sums.chunks[1, 1, 1, 1, 1]))
         end
 
         # distributed pass 2
         for i in axes(labels.chunks, 1)
-            # Dagger.@spawn Moments.centered_sum_update_pass_2!(InOut(ctrd_sums[i].chunks[1, 1, 1, 1]), In(a.chunks[i, 1]), In(labels.chunks[i, 1]))
             Dagger.@spawn dagger_centered_sum_update_pass_2!(InOut(ctrd_sums.chunks[i, 1, 1, 1, 1]), In(a.chunks[i, 1]), In(labels.chunks[i, 1]))
         end
 
         # reduce ctrd_sums
         for i in 2:size(labels.chunks, 1)
-            # Dagger.@spawn cs_sum_reduction_helper!(InOut(ctrd_sums[1].chunks[1, 1, 1, 1]), In(ctrd_sums[i].chunks[1, 1, 1, 1]))
             Dagger.@spawn cs_sum_reduction_helper!(InOut(ctrd_sums.chunks[1, 1, 1, 1, 1]), In(ctrd_sums.chunks[i, 1, 1, 1, 1]))
         end
     end
