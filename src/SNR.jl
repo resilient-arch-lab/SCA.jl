@@ -30,9 +30,10 @@ function SNRBasic{Tt, Tl}(ns::Int, nl::Int) where {Tt<:AbstractFloat, Tl<:Intege
 end
 
 struct SNRMoM{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray} <: AbstractMoMSNR
-    moments::Moments.UniVarMomentsAcc{Tt, Tl, Ta}
+    moments::Moments.AbstractUnivariateMomentsAcc{Tt, Tl, Ta}
 end
 
+# initialize with non-incremental moments accumulator from dataset parameters
 function SNRMoM{Tt, Tl, Ta}(ns::Int, lrange::Int, ldim::Int) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     moments = Moments.UniVarMomentsAcc{Tt, Tl, Ta}(2, ns, lrange, ldim)
     SNRMoM{Tt, Tl, Ta}(moments)
