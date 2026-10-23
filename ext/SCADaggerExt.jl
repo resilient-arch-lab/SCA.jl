@@ -93,12 +93,12 @@ These methods are necessary since the reduction-style distributed estimation met
 arrays which cannot be removed before calling the appropriate method.
 """
 
-function dagger_centered_sum_update_pass_1!(sums::AbstractArray{Tt, 4}, totals::AbstractArray{Int32, 3}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+function dagger_centered_sum_update_pass_1!(sums::AbstractArray{Tt, 4}, totals::AbstractArray{Int32, 3}, traces::AbstractVecOrMat{<:Real}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     Moments.centered_sum_update_pass_1!(dropdims(sums, dims=1), dropdims(totals, dims=1), traces, labels)
     return
 end
 
-function dagger_centered_sum_update_pass_2!(ctrd_sums::AbstractArray{Tt, 5}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+function dagger_centered_sum_update_pass_2!(ctrd_sums::AbstractArray{Tt, 5}, traces::AbstractVecOrMat{<:Real}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     Moments.centered_sum_update_pass_2!(dropdims(ctrd_sums, dims=1), traces, labels)
     return
 end

@@ -7,6 +7,41 @@ using StatsBase
 Random.seed!(12)
 
 
+
+@testset "Univariate Moment estimation dataset shape compatibility test" begin
+    amat = rand(Float32, 20000, 20)
+    avec = vec(amat[:, 1])
+    lmat = rand(UInt8, 20000, 4)
+    lvec = vec(lmat[:, 1])
+
+    m_avec_lvec = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(2, avec, lvec)
+    m_avec_lmat = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(2, avec, lmat)
+    m_amat_lvec = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(2, amat, lvec)
+    m_amat_lmat = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(2, amat, lmat)
+
+    Moments.fit_moments!(m_avec_lvec, avec, lvec)
+    Moments.fit_moments!(m_avec_lmat, avec, lmat)
+    Moments.fit_moments!(m_amat_lvec, amat, lvec)
+    Moments.fit_moments!(m_amat_lmat, amat, lmat)
+
+    @test all(Moments.centered_sums(m_avec_lvec)[1, :, :, :] .≈ Moments.centered_sums(m_amat_lvec)[1, :, :, 1])
+    @test all(Moments.centered_sums(m_avec_lvec)[1, :, :, :] .≈ Moments.centered_sums(m_avec_lmat)[1, :, :, 1])
+end
+
+@testset "Univariate moment estimation live datatype conversion test" begin
+    aint = rand(Int8, 20000, 20)
+    afloat = Float32.(aint)
+    l=rand(UInt8, 20000, 1)
+
+    m1 = Moments.UniVarMomentsAcc{Float32, UInt8, Array}(2, afloat, l)
+    m2 = Moments.UniVarMomentsAcc{Float32, UInt8, Array}(2, afloat, l)
+
+    Moments.fit_moments!(m1, aint, l)
+    Moments.fit_moments!(m2, afloat, l)
+
+    @test all(Moments.centered_sums(m1) .≈ Moments.centered_sums(m2))
+end
+
 @testset "Multivariate Moment Estimation" begin
     # NOTE: this test doesn't always pass, even though the RNG has a fixed seed. Why?
     ns = 2  # must = 2 so that covariance can be calculated from the sums of centered products
@@ -39,26 +74,6 @@ end
     Moments.fit_moments!(mtest, a, l)
 
     @test all(.≈(Moments.centered_sums(mtest)[1, 1, :], Moments.centered_sums(mref)[1, 1, :, :]))
-end
-
-@testset "Moment estimation dataset shape compatibility test" begin
-    amat = rand(Float32, 20000, 20)
-    avec = vec(amat[:, 1])
-    lmat = rand(UInt8, 20000, 4)
-    lvec = vec(lmat[:, 1])
-
-    m_avec_lvec = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(2, avec, lvec)
-    m_avec_lmat = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(2, avec, lmat)
-    m_amat_lvec = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(2, amat, lvec)
-    m_amat_lmat = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(2, amat, lmat)
-
-    Moments.fit_moments!(m_avec_lvec, avec, lvec)
-    Moments.fit_moments!(m_avec_lmat, avec, lmat)
-    Moments.fit_moments!(m_amat_lvec, amat, lvec)
-    Moments.fit_moments!(m_amat_lmat, amat, lmat)
-
-    @test all(Moments.centered_sums(m_avec_lvec)[1, :, :, :] .≈ Moments.centered_sums(m_amat_lvec)[1, :, :, 1])
-    @test all(Moments.centered_sums(m_avec_lvec)[1, :, :, :] .≈ Moments.centered_sums(m_avec_lmat)[1, :, :, 1])
 end
 
 @testset "Centered products estimation satability test 1: re-ordering error vs. float length (no merging)" begin

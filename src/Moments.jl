@@ -2,11 +2,6 @@
 Parallel estimation of statistical moments
 """
 
-"""
-TODO:
-- Make a single function `fit!` to apply to incremental and non incremental MomentsAccs
-"""
-
 
 module Moments
 export fit_moments!, merge_from!, get_mean_and_var, UniVarMomentsAcc, UniVarMomentsAccIncremental, centered_sum_update_pass_1!, centered_sum_update_pass_2!, centered_sums, totals
@@ -227,28 +222,27 @@ end
     end
 end
 
-# no method matching label_wise_sum_ak_transposed!(::Matrix{Float64}, ::Matrix{UInt8}, ::Array{Float64, 3}, ::Array{Int32, 3})
-function label_wise_sum_ak_transposed!(traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractArray{Int32}) where {Tt<:AbstractFloat, Tl<:Integer}
-    @inbounds AK.foraxes(traces, 2) do j
+function label_wise_sum_ak_transposed!(traces::AbstractVecOrMat{Ttin}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractArray{Int32}) where {Ttin<:Real, Tt<:AbstractFloat, Tl<:Integer}
+   @inbounds AK.foraxes(traces, 2) do j
         for i in axes(traces, 1)
             for l in axes(labels, 2)
                 l_i = convert(Int32, labels[i, l]+1)
                 if j == 1
                     totals[l, l_i] += 1
                 end
-                sums[l, l_i, j] += traces[i, j]
+                sums[l, l_i, j] += convert(Tt, traces[i, j])  # TODO: make sure this doesn't actually call convert if Ttin == Tt
             end
         end
     end
 end
 
-function label_wise_sum_ak!(traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractArray{Int32}) where {Tt<:AbstractFloat, Tl<:Integer}
+function label_wise_sum_ak!(traces::AbstractVecOrMat{Ttin}, labels::AbstractVecOrMat{Tl}, sums::AbstractArray{Tt, 3}, totals::AbstractArray{Int32}) where {Ttin<:Real, Tt<:AbstractFloat, Tl<:Integer}
     @inbounds AK.foraxes(traces, 1) do i
         for l in axes(labels, 2)
             l_i = convert(Int32, labels[i, l]+1)
             Atomix.@atomic totals[l, l_i] += 1
             for j in axes(traces, 2)
-                Atomix.@atomic sums[l, l_i, j] += traces[i, j]
+                Atomix.@atomic sums[l, l_i, j] += convert(Tt, traces[i, j])  # TODO: make sure this doesn't actually call convert if Ttin == Tt
             end
         end
     end
@@ -274,14 +268,14 @@ end
     end
 end
 
-function centered_sum_kern_ak!(moments::AbstractArray{Tt, 4}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+function centered_sum_kern_ak!(moments::AbstractArray{Tt, 4}, traces::AbstractVecOrMat{Ttin}, labels::AbstractVecOrMat{Tl}) where {Ttin<:Real, Tt<:AbstractFloat, Tl<:Integer}
     order = size(moments, 3)
     itr_view = @view moments[:, 1, 1, :]
 
     @inbounds AK.foreachindex(itr_view) do idx
         (l, j) = CartesianIndices(itr_view)[idx].I
         for ti in axes(traces, 1)
-            t_i = traces[ti, j]
+            t_i = convert(Tt, traces[ti, j])  #TODO: make sure this only calls convert when Ttin != Tt
             l_i = convert(Int32, labels[ti, l]+1)
             t_update = t_i - moments[l, l_i, 1, j]
             pow = t_update
@@ -293,12 +287,12 @@ function centered_sum_kern_ak!(moments::AbstractArray{Tt, 4}, traces::AbstractVe
     end
 end
 
-function centered_sum_kern_ak_atomic!(moments::AbstractArray{Tt, 4}, traces::AbstractVecOrMat{Tt}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+function centered_sum_kern_ak_atomic!(moments::AbstractArray{Tt, 4}, traces::AbstractVecOrMat{Ttin}, labels::AbstractVecOrMat{Tl}) where {Ttin<:Real, Tt<:AbstractFloat, Tl<:Integer}
     order = size(moments, 3)
 
     @inbounds AK.foreachindex(traces) do idx
         (i, j) = CartesianIndices(traces)[idx].I
-        t_i = traces[i, j]
+        t_i = convert(Tt, traces[i, j])  #TODO: make sure this only calls convert when Ttin != Tt
         for l in axes(moments, 1)
             l_i = convert(Int32, labels[i, l]+1)
             t_update = t_i - moments[l, l_i, 1, j]
@@ -313,12 +307,12 @@ end
 
 
 # First pass in two pass approach
-function centered_sum_update_pass_1!(sums::AbstractArray{Tt}, totals::AbstractArray{Int32}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+function centered_sum_update_pass_1!(sums::AbstractArray{Tt}, totals::AbstractArray{Int32}, traces::AbstractArray{<:Real}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     label_wise_sum_ak_transposed!(traces, labels, sums, totals)
     return
 end
 
-function centered_sum_update_pass_1!(acc::UniVarMomentsAccIncremental{Tt, Tl, Ta}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+function centered_sum_update_pass_1!(acc::UniVarMomentsAccIncremental{Tt, Tl, Ta}, traces::AbstractArray{<:Real}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     @boundscheck begin
         checkbounds(acc._sums, acc.ldim, acc.lrange, size(traces, 2))
         checkbounds(acc._ctrd_sums, acc.ldim, acc.lrange, acc.order, size(traces, 2))
@@ -332,7 +326,7 @@ function centered_sum_update_pass_1!(acc::UniVarMomentsAccIncremental{Tt, Tl, Ta
     return
 end
 
-function centered_sum_update_pass_1!(acc::UniVarMomentsAcc{Tt, Tl, Ta}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+function centered_sum_update_pass_1!(acc::UniVarMomentsAcc{Tt, Tl, Ta}, traces::AbstractArray{<:Real}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     @boundscheck begin
         checkbounds(acc.sums, acc.ldim, acc.lrange, size(traces, 2))
         checkbounds(acc.ctrd_sums, acc.ldim, acc.lrange, acc.order, size(traces, 2))
@@ -344,7 +338,7 @@ function centered_sum_update_pass_1!(acc::UniVarMomentsAcc{Tt, Tl, Ta}, traces::
     return
 end
 
-function centered_sum_update_pass_1!(acc::MultiVarMomentsAcc{Tt, Tl, Ta}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+function centered_sum_update_pass_1!(acc::MultiVarMomentsAcc{Tt, Tl, Ta}, traces::AbstractArray{<:Real}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     @boundscheck begin
         checkbounds(acc.sums, acc.ldim, acc.lrange, size(traces, 2))
         checkbounds(labels, size(traces, 1), acc.ldim)
@@ -355,7 +349,7 @@ function centered_sum_update_pass_1!(acc::MultiVarMomentsAcc{Tt, Tl, Ta}, traces
     return
 end
 
-function centered_sum_update_pass_1!(acc::MultiVarMomentsAccTest{Tt, Tl, Ta}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+function centered_sum_update_pass_1!(acc::MultiVarMomentsAccTest{Tt, Tl, Ta}, traces::AbstractArray{<:Real}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     @boundscheck begin
         checkbounds(acc.sums, acc.ldim, acc.lrange, size(traces, 2))
         checkbounds(labels, size(traces, 1), acc.ldim)
@@ -367,12 +361,12 @@ function centered_sum_update_pass_1!(acc::MultiVarMomentsAccTest{Tt, Tl, Ta}, tr
 end
 
 # Second pass in two pass approach
-function centered_sum_update_pass_2!(ctrd_sums::AbstractArray{Tt}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+function centered_sum_update_pass_2!(ctrd_sums::AbstractArray{Tt}, traces::AbstractArray{<:Real}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     centered_sum_kern_ak!(ctrd_sums, traces, labels)
     return
 end
 
-function centered_sum_update_pass_2!(acc::UniVarMomentsAccIncremental{Tt, Tl, Ta}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+function centered_sum_update_pass_2!(acc::UniVarMomentsAccIncremental{Tt, Tl, Ta}, traces::AbstractArray{<:Real}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     @boundscheck begin
         checkbounds(acc._sums, acc.ldim, acc.lrange, size(traces, 2))
         checkbounds(acc._ctrd_sums, acc.ldim, acc.lrange, acc.order, size(traces, 2))
@@ -401,7 +395,7 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAccIncremental{Tt, Tl, Ta
     return
 end
 
-function centered_sum_update_pass_2!(acc::UniVarMomentsAcc{Tt, Tl, Ta}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+function centered_sum_update_pass_2!(acc::UniVarMomentsAcc{Tt, Tl, Ta}, traces::AbstractArray{<:Real}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     @boundscheck begin
         checkbounds(acc.sums, acc.ldim, acc.lrange, size(traces, 2))
         checkbounds(acc.ctrd_sums, acc.ldim, acc.lrange, acc.order, size(traces, 2))
@@ -415,7 +409,7 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAcc{Tt, Tl, Ta}, traces::
     return
 end
 
-function centered_sum_update_pass_2!(acc::MultiVarMomentsAcc{Tt, Tl, Ta}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+function centered_sum_update_pass_2!(acc::MultiVarMomentsAcc{Tt, Tl, Ta}, traces::AbstractArray{<:Real}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     @boundscheck begin
         checkbounds(acc.sums, acc.ldim, acc.lrange, size(traces, 2))
         checkbounds(labels, size(traces, 1), acc.ldim)
@@ -428,7 +422,7 @@ function centered_sum_update_pass_2!(acc::MultiVarMomentsAcc{Tt, Tl, Ta}, traces
     return
 end
 
-function centered_sum_update_pass_2!(acc::MultiVarMomentsAccTest{Tt, Tl, Ta}, traces::AbstractArray{Tt}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+function centered_sum_update_pass_2!(acc::MultiVarMomentsAccTest{Tt, Tl, Ta}, traces::AbstractArray{<:Real}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     @boundscheck begin
         checkbounds(acc.sums, acc.ldim, acc.lrange, size(traces, 2))
         checkbounds(labels, size(traces, 1), acc.ldim)
