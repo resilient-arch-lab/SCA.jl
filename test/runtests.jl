@@ -280,7 +280,7 @@ end
 
 end
 
-@testset "Test SNR and MoMSNR equivalence" begin
+@testset "Test Naive SNR and MoMSNR equivalence" begin
     nt = 10000
     ns = 100
     lrange = 256
@@ -303,4 +303,31 @@ end
     for i in 1:ldim
         @test all(snr2_results[i, :] .≈ snr1_results[i])
     end
+end
+
+@testset "Test MoMSNR intitialization" begin
+    nt = 10000
+    ns = 100
+    lrange = 256
+    ldim = 16
+
+    a = rand(nt, ns)
+    l = rand(UInt8, nt, ldim)
+
+    snrmoments = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(2, ns, lrange, ldim)
+    snrmomentsinc = Moments.UniVarMomentsAccIncremental{Float64, UInt8, Array}(2, ns, lrange, ldim)
+    snr = SNR.SNRMoM{Float64, UInt8, Array}(ns, lrange, ldim)
+    snr_from_moments = SNR.SNRMoM{Float64, UInt8, Array}(snrmoments)
+    snr_from_moments_inc = SNR.SNRMoM{Float64, UInt8, Array}(snrmomentsinc)
+
+    SNR.SNR_fit!(snr, a, l)
+    SNR.SNR_fit!(snr_from_moments, a, l)
+    SNR.SNR_fit!(snr_from_moments_inc, a, l)
+
+    snr_results = SNR.SNR_finalize(snr)
+    snr_from_moments_results = SNR.SNR_finalize(snr_from_moments)
+    snr_from_moments_inc_results = SNR.SNR_finalize(snr_from_moments_inc)
+
+    @test all(snr_results .≈ snr_from_moments_results)
+    @test all(snr_results .≈ snr_from_moments_inc_results)
 end
