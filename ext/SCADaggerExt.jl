@@ -21,15 +21,21 @@ function Moments.UniVarMomentsAcc{Tt, Tl, DArray}(order, a::DArray, labels::DArr
     @assert size(a.chunks, 2) == 1 "a may not be partitioned over dimension 2"
     @assert all(a_procs[n, 1] == l_procs[n, 1] for n in axes(a_procs, 1)) "a and labels chunks on same dim 1 index must reside on same processor"
 
+    @debug "getting dataset parameters"
     ns = size(a, 2)
     ldim = size(labels, 2)
-    lrange = length(unique(labels))
+    uniques = map(x -> Dagger.@spawn(unique(x)), labels.chunks)
+    uniques = fetch.(uniques)
+    lrange = length(unique(cat(uniques...; dims=1)))
 
+    @debug "allocating intermediate vals"
     sums = zeros(Blocks(1, size(labels, 2), lrange, size(a, 2)), Tt, size(a.chunks, 1), size(labels, 2), lrange, size(a, 2); assignment=a_procs[:, :, :, :])  # extra dim so each worker has chunk
-    totals = zeros(Blocks(1, size(labels, 2), lrange), Int32, size(a.chunks, 1), size(labels, 2), lrange; assignment=assignment=a_procs[:, :, :])  # extra dim so each worker has chunk
+    totals = zeros(Blocks(1, size(labels, 2), lrange), Int32, size(a.chunks, 1), size(labels, 2), lrange; assignment=a_procs[:, :, :])  # extra dim so each worker has chunk
     ctrd_sums = zeros(Blocks(1, size(labels, 2), lrange, order, size(a, 2)), Tt, size(a.chunks, 1), size(labels, 2), lrange, order, size(a, 2); assignment=a_procs[:, :, :, :, :])  # extra dim so each worker has chunk
 
+    @debug "initializing struct"
     Moments.UniVarMomentsAcc{Tt, Tl, DArray}(totals, ctrd_sums, order, ns, lrange, ldim, sums)
+    @debug "finished initializing struct"
 end
 
 
