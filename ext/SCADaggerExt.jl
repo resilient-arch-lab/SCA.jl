@@ -14,7 +14,7 @@ function Moments.UniVarMomentsAcc{Tt, Tl, DArray}(order, a::DArray, labels::DArr
     @assert typeof(a) <: AbstractVecOrMat "a expected to be a Vector or Matrix, got $(typeof(a))"
     @assert typeof(labels) <: AbstractVecOrMat "labels expected to be a Vector or Matrix, got $(typeof(labels))"
 
-    a_parts = a.partitioning; a_procs = chunk_processors(a)
+    a_parts = a.partitioning; a_procs = chunk_processors(a)  # seems to be pretty slow with large distributed arrays
     l_parts = labels.partitioning; l_procs = chunk_processors(labels)
     @assert a_parts.blocksize[1] == l_parts.blocksize[1] "traces and labels must be chunked equally over first dimension"
     @assert size(labels.chunks, 2) == 1 "labels may not be partitioned over dimension 2"
@@ -42,6 +42,7 @@ end
 function Moments.centered_sums(acc::Moments.AbstractUnivariateMomentsAcc{Tt, Tl, DArray}) where {Tt, Tl}
     # assumes chunking scheme with no chunking over sample axis
     return dropdims(fetch(acc.ctrd_sums.chunks[1, 1, 1, 1, 1]), dims=1)
+    @debug "fetched centered sums"
 end
 
 # function Moments.centered_sums(acc::Moments.AbstractMultivariateMomentsAcc{DArray, Tt, Tl}) where {Tt, Tl}
@@ -51,28 +52,34 @@ end
 function Moments.totals(acc::Moments.AbstractMomentsAcc{Tt, Tl, DArray}) where {Tt, Tl}
     # assumes chunking scheme with no chunking over sample axis
     return dropdims(fetch(acc.totals.chunks[1, 1, 1]), dims=1)
+    @debug "fetched totals"
 end
 
 
 
 function mean_helper(moments::AbstractArray{Tt, 4}, sums::AbstractArray{Tt, 3}, totals::AbstractArray) where {Tt<:AbstractFloat}
     moments[:, :, 1, :] .= sums[:, :, :] ./ totals[:, :]
+    @debug "ran mean helper at $(time())"
 end
 
 function mean_helper(moments::AbstractArray{Tt, 5}, sums::AbstractArray{Tt, 4}, totals::AbstractArray) where {Tt<:AbstractFloat}
     moments[:, :, :, 1, :] .= sums[:, :, :, :] ./ totals[:, :, :]
+    @debug "ran mean helper at $(time())"
 end
 
 function sum_reduction_helper!(a1::AbstractArray{T1, N}, a2::AbstractArray{T2, N})::AbstractArray{T1, N} where {T1, T2, N}
     a1 .+= a2
+    @debug "ran sum reduction helper at $(time())"
 end
 
 function cs_sum_reduction_helper!(a1::AbstractArray{T1, 4}, a2::AbstractArray{T2, 4})::AbstractArray{T1, 4} where {T1, T2}
     @views a1[:, :, 2:end, :] .+= a2[:, :, 2:end, :]
+    @debug "ran centered sum reduction helper at $(time())"
 end
 
 function cs_sum_reduction_helper!(a1::AbstractArray{T1, 5}, a2::AbstractArray{T2, 5})::AbstractArray{T1, 5} where {T1, T2}
     @views a1[:, :, :, 2:end, :] .+= a2[:, :, :, 2:end, :]
+    @debug "ran centered sum reduction helper at $(time())"
 end
 
 # gives some kind of aliasing error from dagger
@@ -101,11 +108,13 @@ arrays which cannot be removed before calling the appropriate method.
 
 function dagger_centered_sum_update_pass_1!(sums::AbstractArray{Tt, 4}, totals::AbstractArray{Int32, 3}, traces::AbstractVecOrMat{<:Real}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     Moments.centered_sum_update_pass_1!(dropdims(sums, dims=1), dropdims(totals, dims=1), traces, labels)
+    @debug "ran dagger centered sum update pass 1 at $(time())"
     return
 end
 
 function dagger_centered_sum_update_pass_2!(ctrd_sums::AbstractArray{Tt, 5}, traces::AbstractVecOrMat{<:Real}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
     Moments.centered_sum_update_pass_2!(dropdims(ctrd_sums, dims=1), traces, labels)
+    @debug "ran dagger centered sum update pass 2 at $(time())"
     return
 end
 
@@ -137,6 +146,8 @@ function Moments.fit_moments!(acc::Moments.UniVarMomentsAcc{Tt, Tl, DArray}, tra
             Dagger.@spawn cs_sum_reduction_helper!(InOut(acc.ctrd_sums.chunks[1, 1, 1, 1, 1]), In(acc.ctrd_sums.chunks[i, 1, 1, 1, 1]))
         end
     end
+
+    @debug "finished fit moments datadeps region at $(time())"
 end
 
 
