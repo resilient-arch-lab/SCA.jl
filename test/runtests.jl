@@ -1,6 +1,7 @@
 using SCA
 using Statistics
 using Random
+using CSV, DataFrames
 using Test
 
 using StatsBase
@@ -8,7 +9,7 @@ Random.seed!(12)
 
 
 
-@testset "Univariate Moment estimation dataset shape compatibility test" begin
+@testset "Univariate moment estimation dataset shape compatibility test" begin
     amat = rand(Float32, 20000, 20)
     avec = vec(amat[:, 1])
     lmat = rand(UInt8, 20000, 4)
@@ -42,7 +43,7 @@ end
     @test all(Moments.centered_sums(m1) .≈ Moments.centered_sums(m2))
 end
 
-@testset "Multivariate Moment Estimation" begin
+@testset "Multivariate moment estimation" begin
     # NOTE: this test doesn't always pass, even though the RNG has a fixed seed. Why?
     ns = 2  # must = 2 so that covariance can be calculated from the sums of centered products
     order = 1  # must = 1 for same reason
@@ -76,11 +77,11 @@ end
     @test all(.≈(Moments.centered_sums(mtest)[1, 1, :], Moments.centered_sums(mref)[1, 1, :, :]))
 end
 
-@testset "Centered products estimation satability test 1: re-ordering error vs. float length (no merging)" begin
-    NL = 2
-    a32 = rand(Float32, 20000, 20)
-    a64 = rand(Float64, 20000, 20)
-    l = rand(UInt8, 20000, NL)
+@testset "Moment estimation satability test 1: re-ordering error vs. float length (no merging)" begin
+    NL = 1
+    a32 = rand(Float32, 100000, 1)
+    a64 = rand(Float64, 100000, 1)
+    l = zeros(UInt8, 100000, NL)
 
     n = 10
     order = 16
@@ -93,8 +94,8 @@ end
     # perform `n` iterations
     for i in 1:n
         # estimate moments
-        m32 = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(order, size(a32, 2), 256, NL)
-        m64 = Moments.UniVarMomentsAccIncremental{Float64, UInt8, Array}(order, size(a64, 2), 256, NL)
+        m32 = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(order, size(a32, 2), 1, NL)
+        m64 = Moments.UniVarMomentsAccIncremental{Float64, UInt8, Array}(order, size(a64, 2), 1, NL)
         Moments.fit_moments!(m32, a32, l)
         Moments.fit_moments!(m64, a64, l)
         
@@ -122,26 +123,33 @@ end
     std64 = sqrt.(var(results64, dims=5))
 
     println("32 bit report: ")
-    println("Std. Dev. per order (averaged over sample positions and $(n) iterations):")
+    println("Std. Dev. per order (averaged over $(n) iterations):")
     display(vec(mean(std32, dims=(1, 2, 4)))')
     println("")
 
     println("64 bit report: ")
-    println("Std. Dev. per order (averaged over sample positions and $(n) iterations):")
+    println("Std. Dev. per order (averaged over $(n) iterations):")
     display(vec(mean(std64, dims=(1, 2, 4)))')
     println("")
+
+    df = DataFrame(
+        f32_SD=Float64.(vec(mean(std32, dims=(1, 2, 4)))), 
+        f64_SD=Float64.(vec(mean(std64, dims=(1, 2, 4)))), 
+        order=1:16
+    )
+    CSV.write(joinpath(@__DIR__, "test1_report.csv"), df)
 end
 
-@testset "Centered products estimation satability test 2: % error vs. float length (no merging)" begin
+@testset "Moment estimation satability test 2: % error vs. float length (no merging)" begin
     setprecision(BigFloat, 256)
     prec = precision(BigFloat)
     println("Ground truth float precision: $(prec)")
     
-    NL = 2
-    a32 = rand(Float32, 20000, 20)
+    NL = 1
+    a32 = rand(Float32, 100000, 1)
     a64 = Float64.(a32)
     a256 = big.(a64)
-    l = rand(UInt8, 20000, NL)
+    l = zeros(UInt8, 100000, NL)
 
     n = 10
     order = 16
@@ -153,15 +161,15 @@ end
     println("")
 
     # calculate ground truth
-    m256 = Moments.UniVarMomentsAccIncremental{BigFloat, UInt8, Array}(order, size(a64, 2), 256, NL)
+    m256 = Moments.UniVarMomentsAccIncremental{BigFloat, UInt8, Array}(order, size(a64, 2), 1, NL)
     Moments.fit_moments!(m256, a256, l)
     resultsref = Moments.centered_sums(m256)
 
     # perform `n` iterations
     for i in 1:n
         # estimate moments
-        m32 = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(order, size(a32, 2), 256, NL)
-        m64 = Moments.UniVarMomentsAccIncremental{Float64, UInt8, Array}(order, size(a64, 2), 256, NL)
+        m32 = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(order, size(a32, 2), 1, NL)
+        m64 = Moments.UniVarMomentsAccIncremental{Float64, UInt8, Array}(order, size(a64, 2), 1, NL)
         Moments.fit_moments!(m32, a32, l)
         Moments.fit_moments!(m64, a64, l)
         
@@ -183,17 +191,13 @@ end
         a64, _ = SCA.TestUtils.permute_dataset_rows(a64, l, perm)
     end
 
-    # calculate average RMS error
-    # rms32 = sqrt.(mean((resultsref .- results32).^2, dims=5))
-    # rms64 = sqrt.(mean((resultsref .- results64).^2, dims=5))
-
     rel32 = abs.((results32 .- resultsref)) .* 100
     rel64 = abs.((results64 .- resultsref)) .* 100
 
-    mean32 = vec(mean(rel32, dims=(1, 2, 4, 5)))'
-    max32 = vec(maximum(rel32, dims=(1, 2, 4, 5)))'
-    mean64 = vec(mean(rel64, dims=(1, 2, 4, 5)))'
-    max64 = vec(maximum(rel64, dims=(1, 2, 4, 5)))'
+    mean32 = Float64.(vec(mean(rel32, dims=(1, 2, 4, 5))))'
+    max32 = Float64.(vec(maximum(rel32, dims=(1, 2, 4, 5))))'
+    mean64 = Float64.(vec(mean(rel64, dims=(1, 2, 4, 5))))'
+    max64 = Float64.(vec(maximum(rel64, dims=(1, 2, 4, 5))))'
 
 
     println("32 bit report: ")
@@ -209,9 +213,18 @@ end
     println("Maximum % error: ")
     display(max64)
     println("")
+
+    df = DataFrame(
+        f32_relerr_avg=mean32', 
+        f32_relerr_max=max32',
+        f64_relerr_avg=mean64', 
+        f64_relerr_max=max64', 
+        order=1:16
+    )
+    CSV.write(joinpath(@__DIR__, "test2_report.csv"), df)
 end
 
-@testset "Centered products estimation satability test 3: % error vs. float length and number of merges" begin
+@testset "Moment estimation satability test 3: % error vs. float length and number of merges" begin
     setprecision(BigFloat, 256)
     prec = precision(BigFloat)
     println("Ground truth float precision: $(prec)")
