@@ -230,15 +230,16 @@ end
     println("Ground truth float precision: $(prec)")
     
     NL = 1
-    a32 = rand(Float32, 40000, 20)
+    a32 = rand(Float32, 100000, 20)
     a64 = Float64.(a32)
     a256 = big.(a64)
-    l = rand(UInt8, 40000, NL)
+    l = zeros(UInt8, 100000, NL)
 
     batch_settings = [1, 2, 4, 8]
     order = 16
     
     ref_results = Dict{Int, AbstractArray}()
+    inc_results = Dict{Tuple{Int, Int, String}, AbstractArray}()
 
     println("Dataset parameters: $(size(a32, 1))x$(size(a32, 2)) traces\t$(NL) label length")
     println("Statistic parameters: centered product order = $(order)")
@@ -246,9 +247,9 @@ end
 
     for batches in batch_settings
         # initialize accumulator structs
-        m256 = Moments.UniVarMomentsAccIncremental{BigFloat, UInt8, Array}(order, size(a256, 2), 256, NL)
-        m64 = Moments.UniVarMomentsAccIncremental{Float64, UInt8, Array}(order, size(a64, 2), 256, NL)
-        m32 = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(order, size(a32, 2), 256, NL)
+        m256 = Moments.UniVarMomentsAccIncremental{BigFloat, UInt8, Array}(order, size(a256, 2), 1, NL)
+        m64 = Moments.UniVarMomentsAccIncremental{Float64, UInt8, Array}(order, size(a64, 2), 1, NL)
+        m32 = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(order, size(a32, 2), 1, NL)
         
         batch_size = (Int(ceil(size(a32, 1) / batches)), size(a32, 2))
 
@@ -275,9 +276,6 @@ end
             ref_results[64] = results64
             ref_results[256] = results256
         else
-            rms32 = sqrt.((ref_results[32] .- results32).^2)
-            rms64 = sqrt.((ref_results[64] .- results64).^2)
-            rms256 = sqrt.((ref_results[256] .- results256).^2)
             rel32 = abs.((results32 .- ref_results[32])) .* 100
             rel64 = abs.((results64 .- ref_results[64])) .* 100
             rel256 = abs.((results256 .- ref_results[256])) .* 100
@@ -300,10 +298,39 @@ end
             display(mean256)
             display(max256)
             println("")
+
+            inc_results[(32, batches, "mean")] = mean32'
+            inc_results[(32, batches, "max")] = max32'
+            inc_results[(64, batches, "mean")] = mean64'
+            inc_results[(64, batches, "max")] = max64'
+            inc_results[(256, batches, "mean")] = mean256'
+            inc_results[(256, batches, "max")] = max256'
         end
     end
 
-
+    df = DataFrame(
+        f32_relerr_avg_2batch = inc_results[(32, 2, "mean")],
+        f32_relerr_max_2batch = inc_results[(32, 2, "max")],
+        f64_relerr_avg_2batch = inc_results[(64, 2, "mean")],
+        f64_relerr_max_2batch = inc_results[(64, 2, "max")],
+        f256_relerr_avg_2batch = inc_results[(256, 2, "mean")],
+        f256_relerr_max_2batch = inc_results[(256, 2, "max")],
+        f32_relerr_avg_4batch = inc_results[(32, 4, "mean")],
+        f32_relerr_max_4batch = inc_results[(32, 4, "max")],
+        f64_relerr_avg_4batch = inc_results[(64, 4, "mean")],
+        f64_relerr_max_4batch = inc_results[(64, 4, "max")],
+        f256_relerr_avg_4batch = inc_results[(256, 4, "mean")],
+        f256_relerr_max_4batch = inc_results[(256, 4, "max")],
+        f32_relerr_avg_8batch = inc_results[(32, 8, "mean")],
+        f32_relerr_max_8batch = inc_results[(32, 8, "max")],
+        f64_relerr_avg_8batch = inc_results[(64, 8, "mean")],
+        f64_relerr_max_8batch = inc_results[(64, 8, "max")],
+        f256_relerr_avg_8batch = inc_results[(256, 8, "mean")],
+        f256_relerr_max_8batch = inc_results[(256, 8, "max")],
+        order=1:16
+    )
+    CSV.write(joinpath(@__DIR__, "test3_report.csv"), df)
+    
 
 
 end
