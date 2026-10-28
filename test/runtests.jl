@@ -235,7 +235,7 @@ end
     a256 = big.(a64)
     l = zeros(UInt8, 100000, NL)
 
-    batch_settings = [1, 2, 4, 8]
+    batch_settings = [1, 2, 4, 8, 16]
     order = 16
     
     ref_results = Dict{Int, AbstractArray}()
@@ -327,6 +327,12 @@ end
         f64_relerr_max_8batch = inc_results[(64, 8, "max")],
         f256_relerr_avg_8batch = inc_results[(256, 8, "mean")],
         f256_relerr_max_8batch = inc_results[(256, 8, "max")],
+        f32_relerr_avg_16batch = inc_results[(32, 16, "mean")],
+        f32_relerr_max_16batch = inc_results[(32, 16, "max")],
+        f64_relerr_avg_16batch = inc_results[(64, 16, "mean")],
+        f64_relerr_max_16batch = inc_results[(64, 16, "max")],
+        f256_relerr_avg_16batch = inc_results[(256, 16, "mean")],
+        f256_relerr_max_16batch = inc_results[(256, 16, "max")],
         order=1:16
     )
     CSV.write(joinpath(@__DIR__, "test3_report.csv"), df)
