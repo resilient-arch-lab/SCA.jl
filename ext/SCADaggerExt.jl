@@ -55,7 +55,7 @@ end
 function Moments.totals(acc::Moments.AbstractMomentsAcc{Tt, Tl, DArray}) where {Tt, Tl}
     # assumes chunking scheme with no chunking over sample axis
     @debug "fetched totals"
-    return dropdims(fetch(acc.totals.chunks[1, 1, 1, 1]), dims=1)
+    return dropdims(fetch(acc.totals.chunks[1, 1, 1, 1]), dims=(1, 4))
 end
 
 
