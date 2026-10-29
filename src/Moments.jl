@@ -508,7 +508,7 @@ function merge_from_ak!(CS1::AbstractArray{Tt, 2}, n1::AbstractArray{Int32, 0}, 
             tmp = (((1/n2)^(p-1)) - ((-1/n1)^(p-1))) * ((((n1 * n2)/n) * δ_21)^p)  # this is not how its shown in the paper, but is how scalib implements it.
             # ^ This improves numerical stability at orders > 4 by avoiding division of 1 by n2^(p-1), which is quite large at p>4
             # in the case that n1 = n2, tmp = 0 for all odd p
-            # this term seems to be the cause of large relative error when n > 50000 
+            # this term seems to be the cause of large relative error when n > 50000
 
             CS1[p, j] += tmp
         end
