@@ -19,7 +19,7 @@ end
 
 
 function TTest_fit!(ttest::AbstractMoMTTest, traces, labels)
-    fit_moments!(ttest.moments, traces, labels)
+    Moments.fit_moments!(ttest.moments, traces, labels)
 end
 
 # DOES NOT WORK ON GPU (because of scalar indexing in the last line)
