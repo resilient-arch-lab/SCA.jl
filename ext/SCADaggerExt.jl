@@ -18,7 +18,8 @@ function Moments.UniVarMomentsAcc{Tt, Tl, DArray}(order, a::DArray, labels::DArr
     l_parts = labels.partitioning; l_procs = chunk_processors(labels)
     @assert a_parts.blocksize[1] == l_parts.blocksize[1] "traces and labels must be chunked equally over first dimension"
     @assert size(labels.chunks, 2) == 1 "labels may not be partitioned over dimension 2"
-    @assert size(a.chunks, 2) == 1 "a may not be partitioned over dimension 2"
+    # @assert size(a.chunks, 2) == 1 "a may not be partitioned over dimension 2"
+    @assert all(map(row_procs -> all(==(row_procs[1]), row_procs), eachrow(a_procs)))
     @assert all(a_procs[n, 1] == l_procs[n, 1] for n in axes(a_procs, 1)) "a and labels chunks on same dim 1 index must reside on same processor"
 
     @debug "getting dataset parameters"
@@ -29,19 +30,21 @@ function Moments.UniVarMomentsAcc{Tt, Tl, DArray}(order, a::DArray, labels::DArr
     lrange = length(unique(cat(uniques...; dims=1)))
 
     @debug "allocating intermediate vals"
-    sums = zeros(Blocks(1, size(labels, 2), lrange, size(a, 2)), Tt, size(a.chunks, 1), size(labels, 2), lrange, size(a, 2); assignment=a_procs[:, :, :, :])  # extra dim so each worker has chunk
-    totals = zeros(Blocks(1, size(labels, 2), lrange), Int32, size(a.chunks, 1), size(labels, 2), lrange; assignment=a_procs[:, :, :])  # extra dim so each worker has chunk
-    ctrd_sums = zeros(Blocks(1, size(labels, 2), lrange, order, size(a, 2)), Tt, size(a.chunks, 1), size(labels, 2), lrange, order, size(a, 2); assignment=a_procs[:, :, :, :, :])  # extra dim so each worker has chunk
+    sums = zeros(Blocks(1, size(labels, 2), lrange, a.partitioning.blocksize[2]), Tt, size(a.chunks, 1), size(labels, 2), lrange, size(a, 2); assignment=a_procs[:, :, :, :])  # extra dim so each worker has chunk
+    # totals = zeros(Blocks(1, size(labels, 2), lrange), Int32, size(a.chunks, 1), size(labels, 2), lrange; assignment=a_procs[:, :, :])  # extra dim so each worker has chunk
+    totals = zeros(Blocks(1, size(labels, 2), lrange, 1), Int32, size(a.chunks, 1), size(labels, 2), lrange, size(a.chunks, 2); assignment=a_procs[:, :, :, :])  # extra dim so each worker has chunk
+    ctrd_sums = zeros(Blocks(1, size(labels, 2), lrange, order, a.partitioning.blocksize[2]), Tt, size(a.chunks, 1), size(labels, 2), lrange, order, size(a, 2); assignment=a_procs[:, :, :, :, :])  # extra dim so each worker has chunk
 
     @debug "initializing struct"
-    Moments.UniVarMomentsAcc{Tt, Tl, DArray}(totals, ctrd_sums, order, ns, lrange, ldim, sums)
+    out = Moments.UniVarMomentsAcc{Tt, Tl, DArray}(totals, ctrd_sums, order, ns, lrange, ldim, sums)
     @debug "finished initializing struct"
+    out
 end
 
 
 function Moments.centered_sums(acc::Moments.AbstractUnivariateMomentsAcc{Tt, Tl, DArray}) where {Tt, Tl}
     # assumes chunking scheme with no chunking over sample axis
-    return dropdims(fetch(acc.ctrd_sums.chunks[1, 1, 1, 1, 1]), dims=1)
+    return dropdims(cat(fetch.(acc.ctrd_sums.chunks[1, 1, 1, 1, :])..., dims=5), dims=1)
     @debug "fetched centered sums"
 end
 
@@ -57,29 +60,29 @@ end
 
 
 
-function mean_helper(moments::AbstractArray{Tt, 4}, sums::AbstractArray{Tt, 3}, totals::AbstractArray) where {Tt<:AbstractFloat}
-    moments[:, :, 1, :] .= sums[:, :, :] ./ totals[:, :]
-    @debug "ran mean helper at $(time())"
-end
+# function mean_helper(moments::AbstractArray{Tt, 4}, sums::AbstractArray{Tt, 3}, totals::AbstractArray) where {Tt<:AbstractFloat}
+#     moments[:, :, 1, :] .= sums[:, :, :] ./ totals[:, :]
+#     @debug "ran mean helper at $(time())"
+# end
 
 function mean_helper(moments::AbstractArray{Tt, 5}, sums::AbstractArray{Tt, 4}, totals::AbstractArray) where {Tt<:AbstractFloat}
-    moments[:, :, :, 1, :] .= sums[:, :, :, :] ./ totals[:, :, :]
     @debug "ran mean helper at $(time())"
+    moments[:, :, :, 1, :] .= sums[:, :, :, :] ./ dropdims(view(totals, :, :, :, :), dims=4)
 end
 
 function sum_reduction_helper!(a1::AbstractArray{T1, N}, a2::AbstractArray{T2, N})::AbstractArray{T1, N} where {T1, T2, N}
-    a1 .+= a2
     @debug "ran sum reduction helper at $(time())"
+    a1 .+= a2
 end
 
 function cs_sum_reduction_helper!(a1::AbstractArray{T1, 4}, a2::AbstractArray{T2, 4})::AbstractArray{T1, 4} where {T1, T2}
-    @views a1[:, :, 2:end, :] .+= a2[:, :, 2:end, :]
     @debug "ran centered sum reduction helper at $(time())"
+    @views a1[:, :, 2:end, :] .+= a2[:, :, 2:end, :]
 end
 
 function cs_sum_reduction_helper!(a1::AbstractArray{T1, 5}, a2::AbstractArray{T2, 5})::AbstractArray{T1, 5} where {T1, T2}
-    @views a1[:, :, :, 2:end, :] .+= a2[:, :, :, 2:end, :]
     @debug "ran centered sum reduction helper at $(time())"
+    @views a1[:, :, :, 2:end, :] .+= a2[:, :, :, 2:end, :]
 end
 
 # gives some kind of aliasing error from dagger
@@ -106,8 +109,8 @@ These methods are necessary since the reduction-style distributed estimation met
 arrays which cannot be removed before calling the appropriate method.
 """
 
-function dagger_centered_sum_update_pass_1!(sums::AbstractArray{Tt, 4}, totals::AbstractArray{Int32, 3}, traces::AbstractVecOrMat{<:Real}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
-    Moments.centered_sum_update_pass_1!(dropdims(sums, dims=1), dropdims(totals, dims=1), traces, labels)
+function dagger_centered_sum_update_pass_1!(sums::AbstractArray{Tt, 4}, totals::AbstractArray{Int32, 4}, traces::AbstractVecOrMat{<:Real}, labels::AbstractVecOrMat{Tl}) where {Tt<:AbstractFloat, Tl<:Integer}
+    Moments.centered_sum_update_pass_1!(dropdims(sums, dims=1), dropdims(totals, dims=(1, 4)), traces, labels)
     @debug "ran dagger centered sum update pass 1 at $(time())"
     return
 end
@@ -120,30 +123,39 @@ end
 
 
 function Moments.fit_moments!(acc::Moments.UniVarMomentsAcc{Tt, Tl, DArray}, traces::DArray, labels::DArray) where {Tt, Tl}
-    Dagger.spawn_datadeps() do 
+    Dagger.spawn_datadeps() do
         # distributed pass 1
-        for i in axes(labels.chunks, 1)
-            Dagger.@spawn dagger_centered_sum_update_pass_1!(InOut(acc.sums.chunks[i, 1, 1, 1]), InOut(acc.totals.chunks[i, 1, 1]), In(traces.chunks[i, 1]), In(labels.chunks[i, 1]))
+        for j in axes(traces.chunks, 2)
+            for i in axes(labels.chunks, 1)
+                Dagger.@spawn dagger_centered_sum_update_pass_1!(InOut(acc.sums.chunks[i, 1, 1, j]), InOut(acc.totals.chunks[i, 1, 1, j]), In(traces.chunks[i, j]), In(labels.chunks[i, 1]))
+            end
         end
         
         # calculate mean
         for i in 2:size(labels.chunks, 1)
-            Dagger.@spawn sum_reduction_helper!(InOut(acc.sums.chunks[1, 1, 1, 1]), In(acc.sums.chunks[i, 1, 1, 1]))
-            Dagger.@spawn sum_reduction_helper!(InOut(acc.totals.chunks[1, 1, 1]), In(acc.totals.chunks[i, 1, 1]))
+            for j in axes(traces.chunks, 2)
+                Dagger.@spawn sum_reduction_helper!(InOut(acc.sums.chunks[1, 1, 1, j]), In(acc.sums.chunks[i, 1, 1, j]))
+            end
+            Dagger.@spawn sum_reduction_helper!(InOut(acc.totals.chunks[1, 1, 1, 1]), In(acc.totals.chunks[i, 1, 1, 1]))
         end
-        Dagger.@spawn mean_helper(Out(acc.ctrd_sums.chunks[1, 1, 1, 1, 1]), In(acc.sums.chunks[1, 1, 1, 1]), In(acc.totals.chunks[1, 1, 1]))
-        for i in 2:size(labels.chunks, 1)
-            Dagger.@spawn copyto!(Out(acc.ctrd_sums.chunks[i, 1, 1, 1, 1]), In(acc.ctrd_sums.chunks[1, 1, 1, 1, 1]))
+
+        for j in axes(traces.chunks, 2)
+            Dagger.@spawn mean_helper(Out(acc.ctrd_sums.chunks[1, 1, 1, 1, j]), In(acc.sums.chunks[1, 1, 1, j]), In(acc.totals.chunks[1, 1, 1, 1]))
+            for i in 2:size(labels.chunks, 1)
+                Dagger.@spawn copyto!(Out(acc.ctrd_sums.chunks[i, 1, 1, 1, j]), In(acc.ctrd_sums.chunks[1, 1, 1, 1, j]))
+            end
         end
 
         # distributed pass 2
-        for i in axes(labels.chunks, 1)
-            Dagger.@spawn dagger_centered_sum_update_pass_2!(InOut(acc.ctrd_sums.chunks[i, 1, 1, 1, 1]), In(traces.chunks[i, 1]), In(labels.chunks[i, 1]))
-        end
+        for j in axes(traces.chunks, 2)
+            for i in axes(labels.chunks, 1)
+                Dagger.@spawn dagger_centered_sum_update_pass_2!(InOut(acc.ctrd_sums.chunks[i, 1, 1, 1, j]), In(traces.chunks[i, j]), In(labels.chunks[i, 1]))
+            end
 
-        # reduce ctrd_sums
-        for i in 2:size(labels.chunks, 1)
-            Dagger.@spawn cs_sum_reduction_helper!(InOut(acc.ctrd_sums.chunks[1, 1, 1, 1, 1]), In(acc.ctrd_sums.chunks[i, 1, 1, 1, 1]))
+            # reduce ctrd_sums
+            for i in 2:size(labels.chunks, 1)
+                Dagger.@spawn cs_sum_reduction_helper!(InOut(acc.ctrd_sums.chunks[1, 1, 1, 1, j]), In(acc.ctrd_sums.chunks[i, 1, 1, 1, j]))
+            end
         end
     end
 
