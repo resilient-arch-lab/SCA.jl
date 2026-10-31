@@ -20,5 +20,19 @@ function permute_dataset_rows(a::AbstractArray, l::AbstractArray, perm::Abstract
     return a, l
 end
 
+function generate_test_dataset(nt::Int, ns::Int, ldim::Int, ttype::DataType, ltype::DataType)
+    a = rand(ttype, nt, ns)
+    l = rand(ltype, nt, ldim)
+    return a, l
+end
+
+function generate_test_dataset(nt::Int, ns::Int, ldim::Int, lrange::UnitRange, ttype::DataType, ltype::DataType)
+    a = rand(ttype, nt, ns)
+    l = rand(ltype.(lrange), nt, ldim)
+    return a, l
+end
+
+
+
 
 end
