@@ -100,41 +100,7 @@ function UniVarMomentsAccIncremental{Tt, Tl, Ta}(acc::UniVarMomentsAcc) where {T
     UniVarMomentsAccIncremental{Tt, Tl, Ta}(totals, ctrd_sums, order, ns, lrange, ldim, _totals, _ctrd_sums, _sums)
 end
 
-# TODO:
-#   Rather than an order array, the struct should accept an array of tuples (idx, order)  
-# the update / merge formula for co-moments imposes some constraints:
-# 1. for MA and MB with mutli-index orders α and β respectively, the update formula requires
-#    that MA_{α-β} and MB_{α-β} be known for all possible β ≤ α (where β ≤ α means β_j ≤ α_j ∀ j∈{1, ..., d})
-struct MultiVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray} <: AbstractMultivariateMomentsAcc{Tt, Tl, Ta}
-    totals::Ta
-    SCPs::Ta  # sums of centered products
-    α::Matrix{Int}  # order vectors (vector rows)
-    ns::UInt  # number of samples per trace (and therefore the variateness of sums of centered prods)
-    lrange::UInt
-    ldim::UInt
-    sums::Ta
-end
-
-function MultiVarMomentsAcc{Tt, Tl, Ta}(order::Union{Int, AbstractVector{Int}, AbstractMatrix{Int}}, ns::Integer, lrange::Integer, ldim::Integer) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
-    if typeof(order) == Int
-        α = fill!(Ta{Int, 2}(undef, 1, ns), order)  # the same order is calculated for each sample position 
-    elseif typeof(order) <: AbstractVector{Int}
-        α = reshape(order, 1, ns)
-    else typeof(order) <: AbstractMatrix{Int}
-        checkbounds(order, 1, ns)
-        α = order
-    end
-    
-    totals = fill!(Ta{Int32, 2}(undef, ldim, lrange), 0)
-    SCPs = fill!(Ta{Tt, 4}(undef, ldim, lrange, size(α, 1), 1), 0)
-
-    sums = Ta{Tt, 3}(undef, ldim, lrange, ns)
-    MultiVarMomentsAcc{Tt, Tl, Ta}(totals, SCPs, α, ns, lrange, ldim, sums)
-end
-
-
-# TODO: depricate old MultiVarMomentsAcc
-const IdxOrder = NTuple{2, Int32}
+const IdxOrder = NTuple{2, Int}
 
 struct MultiVarMomentsAccTest{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray} <: AbstractMultivariateMomentsAcc{Tt, Tl, Ta}
     totals::Ta
@@ -146,53 +112,51 @@ struct MultiVarMomentsAccTest{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     sums::Ta
 end
 
-function MultiVarMomentsAccTest{Tt, Tl, Ta}(idx_orders::Union{Tuple{Vararg{IdxOrder}}, AbstractVector{Tuple{Vararg{IdxOrder}}}}, ns::Integer, lrange::Integer, ldim::Integer) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
-    if typeof(idx_orders) == Tuple{Vararg{IdxOrder}} || typeof(idx_orders) <: Tuple{Vararg{IdxOrder}}
+function MultiVarMomentsAccTest{Tt, Tl, Ta}(idx_orders::Union{OIt, AbstractVector{OIt}}, ns::Integer, lrange::Integer, ldim::Integer) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray, OIt <: Tuple{Vararg{Tuple{Int64, Int64}}}}
+    if !(typeof(idx_orders) <: AbstractVector)
         idx_α = [idx_orders]
-    elseif typeof(idx_orders) <: AbstractVector{Tuple{Vararg{IdxOrder}}}
-        idx_α = idx_orders
     else
-        throw(error("Bad argument"))
+        idx_α = idx_orders
     end
     
     totals = fill!(Ta{Int32, 2}(undef, ldim, lrange), 0)
     SCPs = fill!(Ta{Tt, 3}(undef, ldim, lrange, length(idx_α)), 0)
 
-    sums = Ta{Tt, 3}(undef, ldim, lrange, ns)
+    sums = fill!(Ta{Tt, 3}(undef, ldim, lrange, ns), 0)
     MultiVarMomentsAccTest{Tt, Tl, Ta}(totals, SCPs, idx_α, ns, lrange, ldim, sums)
 end
 
+# incremental multivariate moment estimation is not yet functional
+# struct MultiVarMomentsAccIncremental{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray} <: AbstractMultivariateMomentsAcc{Tt, Tl, Ta}
+#     totals::Ta
+#     SCPs::Ta  # sums of centered products
+#     α::Matrix{Int}  # order vectors (vector rows)
+#     ns::UInt  # number of samples per trace (and therefore the variateness of sums of centered prods)
+#     lrange::UInt
+#     ldim::UInt
+#     _totals::Ta
+#     _SCPs::Ta
+#     _sums::Ta
+# end
 
-struct MultiVarMomentsAccIncremental{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray} <: AbstractMultivariateMomentsAcc{Tt, Tl, Ta}
-    totals::Ta
-    SCPs::Ta  # sums of centered products
-    α::Matrix{Int}  # order vectors (vector rows)
-    ns::UInt  # number of samples per trace (and therefore the variateness of sums of centered prods)
-    lrange::UInt
-    ldim::UInt
-    _totals::Ta
-    _SCPs::Ta
-    _sums::Ta
-end
-
-function MultiVarMomentsAccIncremental{Tt, Tl, Ta}(order::Union{Int, AbstractVector{Int}, AbstractMatrix{Int}}, ns::Integer, lrange::Integer, ldim::Integer) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
-    if typeof(order) == Int
-        α = fill!(Ta{Int, 2}(undef, 1, ns), order)  # the same order is calculated for each sample position 
-    elseif typeof(order) <: AbstractVector{Int}
-        α = reshape(order, 1, ns)
-    else typeof(order) <: AbstractMatrix{Int}
-        checkbounds(order, 1, ns)
-        α = order
-    end
+# function MultiVarMomentsAccIncremental{Tt, Tl, Ta}(order::Union{Int, AbstractVector{Int}, AbstractMatrix{Int}}, ns::Integer, lrange::Integer, ldim::Integer) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+#     if typeof(order) == Int
+#         α = fill!(Ta{Int, 2}(undef, 1, ns), order)  # the same order is calculated for each sample position 
+#     elseif typeof(order) <: AbstractVector{Int}
+#         α = reshape(order, 1, ns)
+#     else typeof(order) <: AbstractMatrix{Int}
+#         checkbounds(order, 1, ns)
+#         α = order
+#     end
     
-    totals = fill!(Ta{Int32, 2}(undef, ldim, lrange), 0)
-    SCPs = fill!(Ta{Tt, 4}(undef, ldim, lrange, size(α, 1), 1), 0)
+#     totals = fill!(Ta{Int32, 2}(undef, ldim, lrange), 0)
+#     SCPs = fill!(Ta{Tt, 4}(undef, ldim, lrange, size(α, 1), 1), 0)
 
-    _totals = similar(totals)
-    _SCPs = similar(SCPs)
-    _sums = Ta{Tt, 3}(undef, ldim, lrange, ns)
-    MultiVarMomentsAccIncremental{Tt, Tl, Ta}(totals, SCPs, α, ns, lrange, ldim, _totals, _SCPs, _sums)
-end
+#     _totals = similar(totals)
+#     _SCPs = similar(SCPs)
+#     _sums = Ta{Tt, 3}(undef, ldim, lrange, ns)
+#     MultiVarMomentsAccIncremental{Tt, Tl, Ta}(totals, SCPs, α, ns, lrange, ldim, _totals, _SCPs, _sums)
+# end
 
 
 # utility methods for external interaction
@@ -338,17 +302,6 @@ function centered_sum_update_pass_1!(acc::UniVarMomentsAcc{Tt, Tl, Ta}, traces::
     return
 end
 
-function centered_sum_update_pass_1!(acc::MultiVarMomentsAcc{Tt, Tl, Ta}, traces::AbstractArray{<:Real}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
-    @boundscheck begin
-        checkbounds(acc.sums, acc.ldim, acc.lrange, size(traces, 2))
-        checkbounds(labels, size(traces, 1), acc.ldim)
-    end
-    
-    centered_sum_update_pass_1!(acc.sums, acc.totals, traces, labels)
-
-    return
-end
-
 function centered_sum_update_pass_1!(acc::MultiVarMomentsAccTest{Tt, Tl, Ta}, traces::AbstractArray{<:Real}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     @boundscheck begin
         checkbounds(acc.sums, acc.ldim, acc.lrange, size(traces, 2))
@@ -405,19 +358,6 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAcc{Tt, Tl, Ta}, traces::
     @. acc.ctrd_sums[:, :, 1, :] = acc.sums / acc.totals
 
     centered_sum_kern_ak!(acc.ctrd_sums, traces, labels)
-
-    return
-end
-
-function centered_sum_update_pass_2!(acc::MultiVarMomentsAcc{Tt, Tl, Ta}, traces::AbstractArray{<:Real}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
-    @boundscheck begin
-        checkbounds(acc.sums, acc.ldim, acc.lrange, size(traces, 2))
-        checkbounds(labels, size(traces, 1), acc.ldim)
-    end
-
-    means = acc.sums ./ acc.totals
-
-    centered_sum_kern_ak!(acc.SCPs, traces, labels, acc.α, means)
 
     return
 end

@@ -18,7 +18,6 @@ function Moments.UniVarMomentsAcc{Tt, Tl, DArray}(order, a::DArray, labels::DArr
     l_parts = labels.partitioning; l_procs = chunk_processors(labels)
     @assert a_parts.blocksize[1] == l_parts.blocksize[1] "traces and labels must be chunked equally over first dimension"
     @assert size(labels.chunks, 2) == 1 "labels may not be partitioned over dimension 2"
-    # @assert size(a.chunks, 2) == 1 "a may not be partitioned over dimension 2"
     @assert all(map(row_procs -> all(==(row_procs[1]), row_procs), eachrow(a_procs)))
     @assert all(a_procs[n, 1] == l_procs[n, 1] for n in axes(a_procs, 1)) "a and labels chunks on same dim 1 index must reside on same processor"
 
@@ -31,7 +30,6 @@ function Moments.UniVarMomentsAcc{Tt, Tl, DArray}(order, a::DArray, labels::DArr
 
     @debug "allocating intermediate vals"
     sums = zeros(Blocks(1, size(labels, 2), lrange, a.partitioning.blocksize[2]), Tt, size(a.chunks, 1), size(labels, 2), lrange, size(a, 2); assignment=a_procs[:, :, :, :])  # extra dim so each worker has chunk
-    # totals = zeros(Blocks(1, size(labels, 2), lrange), Int32, size(a.chunks, 1), size(labels, 2), lrange; assignment=a_procs[:, :, :])  # extra dim so each worker has chunk
     totals = zeros(Blocks(1, size(labels, 2), lrange, 1), Int32, size(a.chunks, 1), size(labels, 2), lrange, size(a.chunks, 2); assignment=a_procs[:, :, :, :])  # extra dim so each worker has chunk
     ctrd_sums = zeros(Blocks(1, size(labels, 2), lrange, order, a.partitioning.blocksize[2]), Tt, size(a.chunks, 1), size(labels, 2), lrange, order, size(a, 2); assignment=a_procs[:, :, :, :, :])  # extra dim so each worker has chunk
 
@@ -44,8 +42,8 @@ end
 
 function Moments.centered_sums(acc::Moments.AbstractUnivariateMomentsAcc{Tt, Tl, DArray}) where {Tt, Tl}
     # assumes chunking scheme with no chunking over sample axis
-    return dropdims(cat(fetch.(acc.ctrd_sums.chunks[1, 1, 1, 1, :])..., dims=5), dims=1)
     @debug "fetched centered sums"
+    return dropdims(cat(fetch.(acc.ctrd_sums.chunks[1, 1, 1, 1, :])..., dims=5), dims=1)
 end
 
 # function Moments.centered_sums(acc::Moments.AbstractMultivariateMomentsAcc{DArray, Tt, Tl}) where {Tt, Tl}

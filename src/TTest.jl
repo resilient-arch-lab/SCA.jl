@@ -17,18 +17,35 @@ function TTestMoM{Tt, Tl, Ta}(order::Int, ns::Int, ldim::Int) where {Tt<:Abstrac
     TTestMoM{Tt, Tl, Ta}(moments, order)
 end
 
+function order(ttest::AbstractTTest)::Int
+    return ttest.order
+end
+
+function moments(ttest::AbstractMoMTTest)::Moments.AbstractMomentsAcc
+    return ttest.moments
+end
+
 
 function TTest_fit!(ttest::AbstractMoMTTest, traces, labels)
     Moments.fit_moments!(ttest.moments, traces, labels)
 end
 
 # DOES NOT WORK ON GPU (because of scalar indexing in the last line)
-function TTest_finalize(ttest::AbstractMoMTTest)::AbstractArray
-    μ, σ = Moments.get_mean_and_var(ttest.moments, ttest.order)
-    μ1, μ2 = view(μ, 1, 1, :), view(μ, 1, 2, :)
-    σ1, σ2 = view(σ, 1, 1, :), view(σ, 1, 2, :)
+function TTest_finalize(ttest::AbstractMoMTTest, order::Int)::AbstractArray
+    μ, σ = Moments.get_mean_and_var(ttest.moments, order)
+    μ1, μ2 = view(μ, :, 1, :), view(μ, :, 2, :)
+    σ1, σ2 = view(σ, :, 1, :), view(σ, :, 2, :)
     t = (μ1 - μ2) ./ sqrt.((σ1 ./ Moments.totals(ttest.moments)[1]) .+ (σ2 ./ Moments.totals(ttest.moments)[2]))
     return t
+end
+
+# DOES NOT WORK ON GPU (because of scalar indexing in the last line)
+function TTest_finalize(ttest::AbstractMoMTTest)::AbstractArray
+    out = similar(Moments.centered_sums(moments(ttest)), order(ttest), moments(ttest).ldim, moments(ttest).ns)
+    for order in axes(out, 1)
+        @views out[order, :, :] = TTest_finalize(ttest, order)
+    end
+    return out
 end
 
 end  # module TTest
