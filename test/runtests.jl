@@ -213,7 +213,7 @@ end
     println("Ground truth float precision: $(prec)")
     
     NL = 1
-    a32 = rand(Float32, 100000, 20)
+    a32 = rand(Float32, 100000, 10)
     a64 = Float64.(a32)
     a256 = big.(a64)
     l = zeros(UInt8, 100000, NL)
@@ -259,9 +259,9 @@ end
             ref_results[64] = results64
             ref_results[256] = results256
         else
-            rel32 = abs.((results32 .- ref_results[32])) .* 100
-            rel64 = abs.((results64 .- ref_results[64])) .* 100
-            rel256 = abs.((results256 .- ref_results[256])) .* 100
+            rel32 = Float64.(abs.((results32 .- ref_results[256])) .* 100)
+            rel64 = Float64.(abs.((results64 .- ref_results[256])) .* 100)
+            rel256 = Float64.(abs.((results256 .- ref_results[256])) .* 100)
 
             mean32 = vec(mean(rel32, dims=(1, 2, 4)))'
             max32 = vec(maximum(rel32, dims=(1, 2, 4)))'
