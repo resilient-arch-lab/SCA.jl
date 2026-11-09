@@ -102,7 +102,7 @@ end
 
 const IdxOrder = NTuple{2, Int}
 
-struct MultiVarMomentsAccTest{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray} <: AbstractMultivariateMomentsAcc{Tt, Tl, Ta}
+struct MultiVarMomentsAcc{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray} <: AbstractMultivariateMomentsAcc{Tt, Tl, Ta}
     totals::Ta
     SCPs::Ta  # sums of centered products
     idx_α::AbstractVector{Tuple{Vararg{IdxOrder}}}  # index and order vectors
@@ -112,7 +112,7 @@ struct MultiVarMomentsAccTest{Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     sums::Ta
 end
 
-function MultiVarMomentsAccTest{Tt, Tl, Ta}(idx_orders::Union{OIt, AbstractVector{OIt}}, ns::Integer, lrange::Integer, ldim::Integer) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray, OIt <: Tuple{Vararg{Tuple{Int64, Int64}}}}
+function MultiVarMomentsAcc{Tt, Tl, Ta}(idx_orders::Union{OIt, AbstractVector{OIt}}, ns::Integer, lrange::Integer, ldim::Integer) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray, OIt <: Tuple{Vararg{Tuple{Int64, Int64}}}}
     if !(typeof(idx_orders) <: AbstractVector)
         idx_α = [idx_orders]
     else
@@ -123,7 +123,7 @@ function MultiVarMomentsAccTest{Tt, Tl, Ta}(idx_orders::Union{OIt, AbstractVecto
     SCPs = fill!(Ta{Tt, 3}(undef, ldim, lrange, length(idx_α)), 0)
 
     sums = fill!(Ta{Tt, 3}(undef, ldim, lrange, ns), 0)
-    MultiVarMomentsAccTest{Tt, Tl, Ta}(totals, SCPs, idx_α, ns, lrange, ldim, sums)
+    MultiVarMomentsAcc{Tt, Tl, Ta}(totals, SCPs, idx_α, ns, lrange, ldim, sums)
 end
 
 # incremental multivariate moment estimation is not yet functional
@@ -302,7 +302,7 @@ function centered_sum_update_pass_1!(acc::UniVarMomentsAcc{Tt, Tl, Ta}, traces::
     return
 end
 
-function centered_sum_update_pass_1!(acc::MultiVarMomentsAccTest{Tt, Tl, Ta}, traces::AbstractArray{<:Real}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+function centered_sum_update_pass_1!(acc::MultiVarMomentsAcc{Tt, Tl, Ta}, traces::AbstractArray{<:Real}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     @boundscheck begin
         checkbounds(acc.sums, acc.ldim, acc.lrange, size(traces, 2))
         checkbounds(labels, size(traces, 1), acc.ldim)
@@ -362,7 +362,7 @@ function centered_sum_update_pass_2!(acc::UniVarMomentsAcc{Tt, Tl, Ta}, traces::
     return
 end
 
-function centered_sum_update_pass_2!(acc::MultiVarMomentsAccTest{Tt, Tl, Ta}, traces::AbstractArray{<:Real}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
+function centered_sum_update_pass_2!(acc::MultiVarMomentsAcc{Tt, Tl, Ta}, traces::AbstractArray{<:Real}, labels::AbstractArray{Tl}) where {Tt<:AbstractFloat, Tl<:Integer, Ta<:AbstractArray}
     @boundscheck begin
         checkbounds(acc.sums, acc.ldim, acc.lrange, size(traces, 2))
         checkbounds(labels, size(traces, 1), acc.ldim)

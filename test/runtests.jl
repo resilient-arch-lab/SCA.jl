@@ -47,7 +47,7 @@ end
     ns = 2  # must = 2 so that covariance can be calculated from the sums of centered products
     order = 1  # must = 1 for same reason
     
-    mtest = Moments.MultiVarMomentsAccTest{Float64, UInt8, Array}(((1, order), (2, order)), ns, 2, 1)
+    mtest = Moments.MultiVarMomentsAcc{Float64, UInt8, Array}(((1, order), (2, order)), ns, 2, 1)
 
     a = rand(50000, ns)
     l = UInt8.(rand([0, 1], 50000))
