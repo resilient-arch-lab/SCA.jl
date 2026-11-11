@@ -417,6 +417,7 @@ function get_moments(traces::Matrix{Tt}, labels::Matrix{Tl}, nl::Int, order::Int
     return moments
 end
 
+
 function merge_from_ak!(CS1::AbstractArray{Tt, 2}, n1::AbstractArray{Int32, 0}, CS2::AbstractArray{Tt, 2}, n2::AbstractArray{Int32, 0}) where { Tt<:AbstractFloat }
     @boundscheck begin
         checkbounds(CS2, size(CS1)...)
@@ -429,7 +430,8 @@ function merge_from_ak!(CS1::AbstractArray{Tt, 2}, n1::AbstractArray{Int32, 0}, 
     n = n1 + n2
 
     # error (relative to non incremental) at even orders >= 2 increases with n
-    @inbounds AK.foraxes(CS1, 2) do j  # most allocations here 
+    # error is negative at even orders
+    @inbounds AK.foraxes(CS1, 2) do j  # most allocations here
         δ_21 = CS2[1, j] - CS1[1, j]
         
         for p in order:-1:2  # p = order to update
@@ -445,12 +447,13 @@ function merge_from_ak!(CS1::AbstractArray{Tt, 2}, n1::AbstractArray{Int32, 0}, 
             end
             CS1[p, j] += M_tmp
 
-            tmp = (((1/n2)^(p-1)) - ((-1/n1)^(p-1))) * ((((n1 * n2)/n) * δ_21)^p)  # this is not how its shown in the paper, but is how scalib implements it.
+            tmp4 = (((1/n2)^(p-1)) - ((-1/n1)^(p-1))) 
+            tmp5 = tmp4 * ((((n1 * n2)/n) * δ_21)^p)  # this is not how its shown in the paper, but is how scalib implements it.
             # ^ This improves numerical stability at orders > 4 by avoiding division of 1 by n2^(p-1), which is quite large at p>4
             # in the case that n1 = n2, tmp = 0 for all odd p
             # this term seems to be the cause of large relative error when n > 50000
 
-            CS1[p, j] += tmp
+            CS1[p, j] += tmp5
         end
 
         CS1[1, j] += (δ_21 * (n2/n))  # update mean seperately
@@ -458,6 +461,7 @@ function merge_from_ak!(CS1::AbstractArray{Tt, 2}, n1::AbstractArray{Int32, 0}, 
     
     return nothing
 end
+
 
 function raw_moments(m::AbstractUnivariateMomentsAcc, d::Int)
     @assert d >= 1 "cannot compute raw moment of order < 1 from MomentsAcc struct"
