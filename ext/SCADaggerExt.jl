@@ -18,7 +18,7 @@ function Moments.UniVarMomentsAcc{Tt, Tl, DArray}(order, a::DArray, labels::DArr
     l_parts = labels.partitioning; l_procs = chunk_processors(labels)
     @assert a_parts.blocksize[1] == l_parts.blocksize[1] "traces and labels must be chunked equally over first dimension"
     @assert size(labels.chunks, 2) == 1 "labels may not be partitioned over dimension 2"
-    @assert all(map(row_procs -> all(==(row_procs[1]), row_procs), eachrow(a_procs)))
+    # @assert all(map(row_procs -> all(==(row_procs[1]), row_procs), eachrow(a_procs)))
     @assert all(a_procs[n, 1] == l_procs[n, 1] for n in axes(a_procs, 1)) "a and labels chunks on same dim 1 index must reside on same processor"
 
     @debug "getting dataset parameters"

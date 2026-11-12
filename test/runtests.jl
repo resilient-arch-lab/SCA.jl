@@ -62,64 +62,86 @@ end
 
 @testset "Moment estimation satability test 1: re-ordering error vs. float length (no merging)" begin
     NL = 1
-    a32 = rand(Float32, 100000, 1)
-    a64 = rand(Float64, 100000, 1)
-    l = zeros(UInt8, 100000, NL)
+    sizes = [20000, 50000, 100000]
+    a32 = Dict(s => rand(Float32, s, 1) for s in sizes)
+    a64 = Dict(s => rand(Float64, s, 1) for s in sizes)
+    l = Dict(s => zeros(UInt8, s, NL) for s in sizes)
+
 
     n = 10
     order = 16
-    results32 = []
-    results64 = []
+    # results32 = []
+    # results64 = []
+    results = Dict{Tuple{Int, Int}, AbstractArray}()
     
-    println("Dataset parameters: $(size(a32, 1))x$(size(a32, 2)) traces\t$(NL) label length")
-    println("Statistic parameters: centered product order = $(order)")
-    println("")
     # perform `n` iterations
     for i in 1:n
-        # estimate moments
-        m32 = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(order, size(a32, 2), 1, NL)
-        m64 = Moments.UniVarMomentsAccIncremental{Float64, UInt8, Array}(order, size(a64, 2), 1, NL)
-        Moments.fit_moments!(m32, a32, l)
-        Moments.fit_moments!(m64, a64, l)
-        
-        # store results
-        if isempty(results32)
-            results32 = Moments.centered_sums(m32)
-        else
-            results32 = cat(results32, Moments.centered_sums(m32), dims=5)
-        end
-        if isempty(results64)
-            results64 = Moments.centered_sums(m64)
-        else
-            results64 = cat(results64, Moments.centered_sums(m64), dims=5)
-        end
+        for s in sizes
+            # estimate moments
+            m32 = Moments.UniVarMomentsAcc{Float32, UInt8, Array}(order, size(a32[s], 2), 1, NL)
+            m64 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(order, size(a64[s], 2), 1, NL)
+            Moments.fit_moments!(m32, a32[s], l[s])
+            Moments.fit_moments!(m64, a64[s], l[s])
+            
+            # store results
+            if !(haskey(results, (32, s)))
+                # results32 = Moments.centered_sums(m32)
+                results[(32, s)] = Float64.(Moments.centered_sums(m32))
+            else
+                # results32 = cat(results32, Moments.centered_sums(m32), dims=5)
+                results[(32, s)] = cat(results[(32, s)], Float64.(Moments.centered_sums(m32)), dims=5)
 
-        # shuffle trace rows and labels 
-        perm = randperm(size(a32, 1))
-        a32, l = SCA.TestUtils.permute_dataset_rows(a32, l, perm)
-        a64, _ = SCA.TestUtils.permute_dataset_rows(a64, l, perm)
+            end
+            if !(haskey(results, (64, s)))
+                # results64 = Moments.centered_sums(m64)
+                results[(64, s)] = Float64.(Moments.centered_sums(m64))
+            else
+                # results64 = cat(results64, Moments.centered_sums(m64), dims=5)
+                results[(64, s)] = cat(results[(64, s)], Float64.(Moments.centered_sums(m64)), dims=5)
+            end
+
+            # shuffle trace rows and labels 
+            perm = randperm(size(a32[s], 1))
+            a32[s], l[s] = SCA.TestUtils.permute_dataset_rows(a32[s], l[s], perm)
+            a64[s], _ = SCA.TestUtils.permute_dataset_rows(a64[s], l[s], perm)
+        end
     end
 
-    mean32 = mean(results32, dims=5)
-    mean64 = mean(results64, dims=5)
-    std32 = sqrt.(var(results32, dims=5))
-    std64 = sqrt.(var(results64, dims=5))
+    mean_32_20k = mean(results[(32, 20000)], dims=5)
+    mean_64_20k = mean(results[(64, 20000)], dims=5)
+    std_32_20k = sqrt.(var(results[(32, 20000)], dims=5))
+    std_64_20k = sqrt.(var(results[(64, 20000)], dims=5))
+    
+    mean_32_50k = mean(results[(32, 50000)], dims=5)
+    mean_64_50k = mean(results[(64, 50000)], dims=5)
+    std_32_50k = sqrt.(var(results[(32, 50000)], dims=5))
+    std_64_50k = sqrt.(var(results[(64, 50000)], dims=5))
 
-    println("32 bit report: ")
-    println("Std. Dev. per order (averaged over $(n) iterations):")
-    display(vec(mean(std32, dims=(1, 2, 4)))')
-    println("")
+    mean_32_100k = mean(results[(32, 100000)], dims=5)
+    mean_64_100k = mean(results[(64, 100000)], dims=5)
+    std_32_100k = sqrt.(var(results[(32, 100000)], dims=5))
+    std_64_100k = sqrt.(var(results[(64, 100000)], dims=5))
 
-    println("64 bit report: ")
-    println("Std. Dev. per order (averaged over $(n) iterations):")
-    display(vec(mean(std64, dims=(1, 2, 4)))')
-    println("")
+    # println("32 bit report: ")
+    # println("Std. Dev. per order (averaged over $(n) iterations):")
+    # display(vec(mean(std_32_100k, dims=(1, 2, 4)))')
+    # println("")
+
+    # println("64 bit report: ")
+    # println("Std. Dev. per order (averaged over $(n) iterations):")
+    # display(vec(mean(std_64_100k, dims=(1, 2, 4)))')
+    # println("")
 
     df = DataFrame(
-        f32_SD=Float64.(vec(mean(std32, dims=(1, 2, 4)))), 
-        f64_SD=Float64.(vec(mean(std64, dims=(1, 2, 4)))), 
+        f32_20k_SD=(vec(mean(std_32_20k, dims=(1, 2, 4)))), 
+        f64_20k_SD=(vec(mean(std_64_20k, dims=(1, 2, 4)))), 
+        f32_50k_SD=(vec(mean(std_32_50k, dims=(1, 2, 4)))), 
+        f64_50k_SD=(vec(mean(std_64_50k, dims=(1, 2, 4)))), 
+        f32_100k_SD=(vec(mean(std_32_100k, dims=(1, 2, 4)))), 
+        f64_100k_SD=(vec(mean(std_64_100k, dims=(1, 2, 4)))), 
         order=1:16
     )
+
     CSV.write(joinpath(@__DIR__, "test1_report.csv"), df)
 end
 
@@ -127,81 +149,109 @@ end
     setprecision(BigFloat, 256)
     prec = precision(BigFloat)
     println("Ground truth float precision: $(prec)")
-    
+
     NL = 1
-    a32 = rand(Float32, 100000, 1)
-    a64 = Float64.(a32)
-    a256 = big.(a64)
-    l = zeros(UInt8, 100000, NL)
+    sizes = [20000, 50000, 100000]
+    a32 = Dict(s => rand(Float32, s, 1) for s in sizes)
+    a64 = Dict(s => Float64.(a32[s]) for s in sizes)
+    a256 = Dict(s => big.(a64[s]) for s in sizes)
+    l = Dict(s => zeros(UInt8, s, NL) for s in sizes)
 
     n = 10
     order = 16
-    results32 = []
-    results64 = []
+    results = Dict{Tuple{Int, Int}, AbstractArray}()
+    resultsref = Dict{Int, AbstractArray}()
 
-    println("Dataset parameters: $(size(a32, 1))x$(size(a32, 2)) traces\t$(NL) label length")
-    println("Statistic parameters: centered product order = $(order)")
-    println("")
-
-    # calculate ground truth
-    m256 = Moments.UniVarMomentsAccIncremental{BigFloat, UInt8, Array}(order, size(a64, 2), 1, NL)
-    Moments.fit_moments!(m256, a256, l)
-    resultsref = Moments.centered_sums(m256)
+    # println("Dataset parameters: $(size(a32, 1))x$(size(a32, 2)) traces\t$(NL) label length")
+    # println("Statistic parameters: centered product order = $(order)")
+    # println("")
 
     # perform `n` iterations
-    for i in 1:n
-        # estimate moments
-        m32 = Moments.UniVarMomentsAccIncremental{Float32, UInt8, Array}(order, size(a32, 2), 1, NL)
-        m64 = Moments.UniVarMomentsAccIncremental{Float64, UInt8, Array}(order, size(a64, 2), 1, NL)
-        Moments.fit_moments!(m32, a32, l)
-        Moments.fit_moments!(m64, a64, l)
-        
-        # store results
-        if isempty(results32)
-            results32 = Moments.centered_sums(m32)
-        else
-            results32 = cat(results32, Moments.centered_sums(m32), dims=5)
-        end
-        if isempty(results64)
-            results64 = Moments.centered_sums(m64)
-        else
-            results64 = cat(results64, Moments.centered_sums(m64), dims=5)
-        end
+    for s in sizes
+        # calculate ground truth
+        m256 = Moments.UniVarMomentsAcc{BigFloat, UInt8, Array}(order, size(a64[s], 2), 1, NL)
+        Moments.fit_moments!(m256, a256[s], l[s])
+        resultsref[s] = Float64.(Moments.centered_sums(m256))
+    
+        for i in 1:n
+            # estimate moments
+            m32 = Moments.UniVarMomentsAcc{Float32, UInt8, Array}(order, size(a32[s], 2), 1, NL)
+            m64 = Moments.UniVarMomentsAcc{Float64, UInt8, Array}(order, size(a64[s], 2), 1, NL)
+            Moments.fit_moments!(m32, a32[s], l[s])
+            Moments.fit_moments!(m64, a64[s], l[s])
+            
+            # store results
+            if !(haskey(results, (32, s)))
+                results[(32, s)] = big.(Moments.centered_sums(m32))
+            else
+                results[(32, s)] = cat(results[(32, s)], big.(Moments.centered_sums(m32)), dims=5)
 
-        # shuffle trace rows and labels
-        perm = randperm(size(a32, 1))
-        a32, l = SCA.TestUtils.permute_dataset_rows(a32, l, perm)
-        a64, _ = SCA.TestUtils.permute_dataset_rows(a64, l, perm)
+            end
+            if !(haskey(results, (64, s)))
+                results[(64, s)] = big.(Moments.centered_sums(m64))
+            else
+                results[(64, s)] = cat(results[(64, s)], big.(Moments.centered_sums(m64)), dims=5)
+            end
+
+            # shuffle trace rows and labels 
+            perm = randperm(size(a32[s], 1))
+            a32[s], l[s] = SCA.TestUtils.permute_dataset_rows(a32[s], l[s], perm)
+            a64[s], _ = SCA.TestUtils.permute_dataset_rows(a64[s], l[s], perm)
+        end
     end
 
-    rel32 = abs.((results32 .- resultsref)) .* 100
-    rel64 = abs.((results64 .- resultsref)) .* 100
+    relerr_mean(prec::Int, size::Int) = vec(mean(abs.(results[(prec, size)] .- resultsref[size]) .* 100, dims=(1, 2, 4, 5)))'
+    relerr_max(prec::Int, size::Int) = vec(maximum(abs.(results[(prec, size)] .- resultsref[size]) .* 100, dims=(1, 2, 4, 5)))'
 
-    mean32 = Float64.(vec(mean(rel32, dims=(1, 2, 4, 5))))'
-    max32 = Float64.(vec(maximum(rel32, dims=(1, 2, 4, 5))))'
-    mean64 = Float64.(vec(mean(rel64, dims=(1, 2, 4, 5))))'
-    max64 = Float64.(vec(maximum(rel64, dims=(1, 2, 4, 5))))'
+    # rel32 = abs.((results[(32, 100000)] .- resultsref[100000])) .* 100
+    # rel64 = abs.((results[(64, 100000)] .- resultsref[100000])) .* 100
 
+    # mean32 = vec(mean(rel32, dims=(1, 2, 4, 5)))'
+    # max32 = vec(maximum(rel32, dims=(1, 2, 4, 5)))'
+    # mean64 = vec(mean(rel64, dims=(1, 2, 4, 5)))'
+    # max64 = vec(maximum(rel64, dims=(1, 2, 4, 5)))'
+    mean_32_100k = relerr_mean(32, 100000)
+    max_32_100k = relerr_max(32, 100000)
+    mean_64_100k = relerr_mean(64, 100000)
+    max_64_100k = relerr_max(64, 100000)
 
-    println("32 bit report: ")
-    println("% error vs reference (averaged over sample positions and $(n) iterations):")
-    display(mean32)
-    println("Maximum % error: ")
-    display(max32)
-    println("")
+    mean_32_50k = relerr_mean(32, 50000)
+    max_32_50k = relerr_max(32, 50000)
+    mean_64_50k = relerr_mean(64, 50000)
+    max_64_50k = relerr_max(64, 50000)
+
+    mean_32_20k = relerr_mean(32, 20000)
+    max_32_20k = relerr_max(32, 20000)
+    mean_64_20k = relerr_mean(64, 20000)
+    max_64_20k = relerr_max(64, 20000)
+
+    # println("32 bit report: ")
+    # println("% error vs reference (averaged over sample positions and $(n) iterations):")
+    # display(mean_32_100k)
+    # println("Maximum % error: ")
+    # display(max_32_100k)
+    # println("")
     
-    println("64 bit report: ")
-    println("% error vs reference (averaged over sample positions and $(n) iterations):")
-    display(mean64)
-    println("Maximum % error: ")
-    display(max64)
-    println("")
+    # println("64 bit report: ")
+    # println("% error vs reference (averaged over sample positions and $(n) iterations):")
+    # display(mean_64_100k)
+    # println("Maximum % error: ")
+    # display(max_64_100k)
+    # println("")
 
     df = DataFrame(
-        f32_relerr_avg=mean32', 
-        f32_relerr_max=max32',
-        f64_relerr_avg=mean64', 
-        f64_relerr_max=max64', 
+        f32_relerr_avg_100k=mean_32_100k', 
+        f32_relerr_max_100k=max_32_100k',
+        f64_relerr_avg_100k=mean_64_100k', 
+        f64_relerr_max_100k=max_64_100k',
+        f32_relerr_avg_50k=mean_32_50k', 
+        f32_relerr_max_50k=max_32_50k',
+        f64_relerr_avg_50k=mean_64_50k', 
+        f64_relerr_max_50k=max_64_50k', 
+        f32_relerr_avg_20k=mean_32_20k', 
+        f32_relerr_max_20k=max_32_20k',
+        f64_relerr_avg_20k=mean_64_20k', 
+        f64_relerr_max_20k=max_64_20k', 
         order=1:16
     )
     CSV.write(joinpath(@__DIR__, "test2_report.csv"), df)
