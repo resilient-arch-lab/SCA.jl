@@ -29,9 +29,9 @@ function Moments.UniVarMomentsAcc{Tt, Tl, DArray}(order, a::DArray, labels::DArr
     lrange = length(unique(cat(uniques...; dims=1)))
 
     @debug "allocating intermediate vals"
-    sums = zeros(Blocks(1, size(labels, 2), lrange, a.partitioning.blocksize[2]), Tt, size(a.chunks, 1), size(labels, 2), lrange, size(a, 2); assignment=a_procs[:, :, :, :])  # extra dim so each worker has chunk
-    totals = zeros(Blocks(1, size(labels, 2), lrange, 1), Int32, size(a.chunks, 1), size(labels, 2), lrange, size(a.chunks, 2); assignment=a_procs[:, :, :, :])  # extra dim so each worker has chunk
-    ctrd_sums = zeros(Blocks(1, size(labels, 2), lrange, order, a.partitioning.blocksize[2]), Tt, size(a.chunks, 1), size(labels, 2), lrange, order, size(a, 2); assignment=a_procs[:, :, :, :, :])  # extra dim so each worker has chunk
+    sums = zeros(Blocks(1, size(labels, 2), lrange, a.partitioning.blocksize[2]), Tt, size(a.chunks, 1), size(labels, 2), lrange, size(a, 2); assignment=a_procs[:, [[CartesianIndex()] for _ in 1:2]..., :])  # extra dim so each worker has chunk
+    totals = zeros(Blocks(1, size(labels, 2), lrange, 1), Int32, size(a.chunks, 1), size(labels, 2), lrange, size(a.chunks, 2); assignment=a_procs[:, [[CartesianIndex()] for _ in 1:2]..., :])  # extra dim so each worker has chunk
+    ctrd_sums = zeros(Blocks(1, size(labels, 2), lrange, order, a.partitioning.blocksize[2]), Tt, size(a.chunks, 1), size(labels, 2), lrange, order, size(a, 2); assignment=a_procs[:, [[CartesianIndex()] for _ in 1:3]..., :])  # extra dim so each worker has chunk
 
     @debug "initializing struct"
     out = Moments.UniVarMomentsAcc{Tt, Tl, DArray}(totals, ctrd_sums, order, ns, lrange, ldim, sums)
