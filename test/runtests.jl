@@ -70,8 +70,6 @@ end
 
     n = 10
     order = 16
-    # results32 = []
-    # results64 = []
     results = Dict{Tuple{Int, Int}, AbstractArray}()
     
     # perform `n` iterations
@@ -85,18 +83,14 @@ end
             
             # store results
             if !(haskey(results, (32, s)))
-                # results32 = Moments.centered_sums(m32)
                 results[(32, s)] = Float64.(Moments.centered_sums(m32))
             else
-                # results32 = cat(results32, Moments.centered_sums(m32), dims=5)
                 results[(32, s)] = cat(results[(32, s)], Float64.(Moments.centered_sums(m32)), dims=5)
 
             end
             if !(haskey(results, (64, s)))
-                # results64 = Moments.centered_sums(m64)
                 results[(64, s)] = Float64.(Moments.centered_sums(m64))
             else
-                # results64 = cat(results64, Moments.centered_sums(m64), dims=5)
                 results[(64, s)] = cat(results[(64, s)], Float64.(Moments.centered_sums(m64)), dims=5)
             end
 
@@ -121,16 +115,6 @@ end
     mean_64_100k = mean(results[(64, 100000)], dims=5)
     std_32_100k = sqrt.(var(results[(32, 100000)], dims=5))
     std_64_100k = sqrt.(var(results[(64, 100000)], dims=5))
-
-    # println("32 bit report: ")
-    # println("Std. Dev. per order (averaged over $(n) iterations):")
-    # display(vec(mean(std_32_100k, dims=(1, 2, 4)))')
-    # println("")
-
-    # println("64 bit report: ")
-    # println("Std. Dev. per order (averaged over $(n) iterations):")
-    # display(vec(mean(std_64_100k, dims=(1, 2, 4)))')
-    # println("")
 
     df = DataFrame(
         f32_20k_SD=(vec(mean(std_32_20k, dims=(1, 2, 4)))), 
@@ -161,10 +145,6 @@ end
     order = 16
     results = Dict{Tuple{Int, Int}, AbstractArray}()
     resultsref = Dict{Int, AbstractArray}()
-
-    # println("Dataset parameters: $(size(a32, 1))x$(size(a32, 2)) traces\t$(NL) label length")
-    # println("Statistic parameters: centered product order = $(order)")
-    # println("")
 
     # perform `n` iterations
     for s in sizes
@@ -203,13 +183,6 @@ end
     relerr_mean(prec::Int, size::Int) = vec(mean(abs.(results[(prec, size)] .- resultsref[size]) .* 100, dims=(1, 2, 4, 5)))'
     relerr_max(prec::Int, size::Int) = vec(maximum(abs.(results[(prec, size)] .- resultsref[size]) .* 100, dims=(1, 2, 4, 5)))'
 
-    # rel32 = abs.((results[(32, 100000)] .- resultsref[100000])) .* 100
-    # rel64 = abs.((results[(64, 100000)] .- resultsref[100000])) .* 100
-
-    # mean32 = vec(mean(rel32, dims=(1, 2, 4, 5)))'
-    # max32 = vec(maximum(rel32, dims=(1, 2, 4, 5)))'
-    # mean64 = vec(mean(rel64, dims=(1, 2, 4, 5)))'
-    # max64 = vec(maximum(rel64, dims=(1, 2, 4, 5)))'
     mean_32_100k = relerr_mean(32, 100000)
     max_32_100k = relerr_max(32, 100000)
     mean_64_100k = relerr_mean(64, 100000)
@@ -224,20 +197,6 @@ end
     max_32_20k = relerr_max(32, 20000)
     mean_64_20k = relerr_mean(64, 20000)
     max_64_20k = relerr_max(64, 20000)
-
-    # println("32 bit report: ")
-    # println("% error vs reference (averaged over sample positions and $(n) iterations):")
-    # display(mean_32_100k)
-    # println("Maximum % error: ")
-    # display(max_32_100k)
-    # println("")
-    
-    # println("64 bit report: ")
-    # println("% error vs reference (averaged over sample positions and $(n) iterations):")
-    # display(mean_64_100k)
-    # println("Maximum % error: ")
-    # display(max_64_100k)
-    # println("")
 
     df = DataFrame(
         f32_relerr_avg_100k=mean_32_100k', 
